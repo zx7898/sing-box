@@ -242,7 +242,7 @@ socks5_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)  # 新增 SOCKS5 �
     public_key=$(echo "${output}" | awk '/PublicKey:/ {print $2}')
 
     # 放行端口
-    allow_port $vless_port/tcp $nginx_port/tcp $tuic_port/udp $hy2_port/udp $socks5_port/tcp 8001/tcp > /dev/null 2>&1
+    allow_port $vless_port/tcp $nginx_port/tcp $tuic_port/udp $hy2_port/udp $socks5_port/tcp > /dev/null 2>&1
 
     # 生成自签名证书
     openssl ecparam -genkey -name prime256v1 -out "${work_dir}/private.key"
@@ -305,7 +305,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8002,
       "users": [
         {
           "uuid": "$uuid"
@@ -321,7 +321,7 @@ cat > "${config_dir}" << EOF
       "type": "vless",
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8003,
       "users": [
         {
           "uuid": "$uuid",
@@ -338,7 +338,7 @@ cat > "${config_dir}" << EOF
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8004,
       "users": [
         {
           "password": "$uuid"
@@ -413,10 +413,6 @@ cat > "${config_dir}" << EOF
       "tag": "block"
     },
     {
-      "type": "dns",
-      "tag": "dns-out"
-    }
-    {
       "type": "wireguard",
       "tag": "wireguard-out",
       "server": "engage.cloudflareclient.com",
@@ -449,14 +445,6 @@ cat > "${config_dir}" << EOF
       }
     ],
     "rules": [
-      {
-        "protocol": "dns",
-        "outbound": "dns-out"
-      },
-      {
-        "ip_is_private": true,
-        "outbound": "direct"
-      },
       {
         "rule_set": ["openai", "netflix"],
         "outbound": "wireguard-out"
@@ -609,6 +597,44 @@ $work_dir/qrencode "https://sublink.eooce.com/surge?config=http://${server_ip}:$
 yellow "\n==========================================================================================\n"
 }
 
+# 验证端口和分流配置
+verify_nginx_proxy() {
+    green "验证 Nginx 分流配置..."
+    
+    # 检查 Nginx 是否监听 8001
+    if ss -tuln | grep ":8001 " > /dev/null; then
+        green "✓ Nginx 8001 端口监听正常"
+    else
+        red "✗ Nginx 8001 端口未监听"
+    fi
+    
+    # 检查 sing-box 后端端口
+    local backend_ports=("8002" "8003" "8004")
+    local protocols=("VMESS" "VLESS" "Trojan")
+    
+    for i in "${!backend_ports[@]}"; do
+        local port=${backend_ports[$i]}
+        local protocol=${protocols[$i]}
+        
+        if ss -tuln | grep ":$port " > /dev/null; then
+            green "✓ 后端端口 $port ($protocol) 监听正常"
+        else
+            red "✗ 后端端口 $port ($protocol) 未监听"
+        fi
+    done
+    
+    # 测试分流配置
+    green "测试 WebSocket 分流..."
+    local paths=("/vmess-argo" "/vless-argo" "/trojan-argo")
+    for path in "${paths[@]}"; do
+        if curl -s -I http://localhost:8001$path | head -1 | grep -q "404\|101"; then
+            green "✓ 路径 $path 分流正常"
+        else
+            red "✗ 路径 $path 分流异常"
+        fi
+    done
+}
+
 # nginx订阅配置
 add_nginx_conf() {
     if ! command_exists nginx; then
@@ -624,7 +650,7 @@ add_nginx_conf() {
     [[ -f "/etc/nginx/conf.d/sing-box.conf" ]] && cp /etc/nginx/conf.d/sing-box.conf /etc/nginx/conf.d/sing-box.conf.bak.sb
 
     cat > /etc/nginx/conf.d/sing-box.conf << EOF
-# sing-box 订阅配置
+# sing-box 订阅配置和WebSocket分流
 server {
     listen $nginx_port;
     listen [::]:$nginx_port;
@@ -652,6 +678,57 @@ server {
         deny all;
         access_log off;
         log_not_found off;
+    }
+}
+
+# WebSocket 分流配置
+server {
+    listen 8001;
+    listen [::]:8001;
+    server_name _;
+
+    # VMESS WebSocket 分流
+    location /vmess-argo {
+        proxy_pass http://127.0.0.1:8002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 86400;
+    }
+
+    # VLESS WebSocket 分流
+    location /vless-argo {
+        proxy_pass http://127.0.0.1:8003;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 86400;
+    }
+
+    # Trojan WebSocket 分流
+    location /trojan-argo {
+        proxy_pass http://127.0.0.1:8004;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
+        proxy_read_timeout 86400;
+    }
+
+    # 默认返回404
+    location / {
+        return 404;
     }
 }
 EOF
@@ -682,9 +759,9 @@ http {
     include       /etc/nginx/mime.types;
     default_type  application/octet-stream;
     
-    log_format  main  '$remote_addr - $remote_user [$time_local] "$request" '
-                      '$status $body_bytes_sent "$http_referer" '
-                      '"$http_user_agent" "$http_x_forwarded_for"';
+    log_format  main  '\$remote_addr - \$remote_user [\$time_local] "\$request" '
+                      '\$status \$body_bytes_sent "\$http_referer" '
+                      '"\$http_user_agent" "\$http_x_forwarded_for"';
     
     access_log  /var/log/nginx/access.log  main;
     sendfile        on;
@@ -695,16 +772,18 @@ http {
 EOF
     fi
 
+    # 放行端口
+    allow_port 8001/tcp 8002/tcp 8003/tcp 8004/tcp > /dev/null 2>&1
+
     # 检查nginx配置语法
     if nginx -t > /dev/null 2>&1; then
-    
         if nginx -s reload > /dev/null 2>&1; then
-            green "nginx订阅配置已加载"
+            green "nginx订阅和分流配置已加载"
         else
             start_nginx  > /dev/null 2>&1
         fi
     else
-        yellow "nginx配置失败,订阅不可应,但不影响节点使用, issues反馈: https://github.com/eooce/Sing-box/issues"
+        yellow "nginx配置失败,订阅不可用,但不影响节点使用, issues反馈: https://github.com/eooce/Sing-box/issues"
         restart_nginx  > /dev/null 2>&1
         if [ $? -eq 0 ]; then
             green "nginx订阅配置已生效"
