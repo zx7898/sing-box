@@ -229,7 +229,6 @@ install_singbox() {
     chown root:root ${work_dir} && chmod +x ${work_dir}/${server_name} ${work_dir}/argo ${work_dir}/qrencode
 
    # 生成随机端口和密码
-    shared_port=$vless_port
     nginx_port=$(($vless_port + 1)) 
     tuic_port=$(($vless_port + 2))
     hy2_port=$(($vless_port + 3)) 
@@ -303,73 +302,52 @@ cat > "${config_dir}" << EOF
       }
     },
     {
-      "type": "vless",
-      "tag": "vless-ws-tls",
-      "listen": "::",
-      "listen_port": $vless_port, // <--- 共享端口
-      "users": [
-        {
-          "uuid": "$uuid",
-          "flow": "xtls-rprx-vision" // flow可以保留，但WS下实际上是无效的
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "server_name": "bing.com",
-        "alpn": [
-          "h2",
-          "http/1.1"
-        ],
-        "certificate_path": "$work_dir/cert.pem",
-        "key_path": "$work_dir/private.key"
-      },
-      "transport": {
-        "type": "ws",
-        "path": "/vless-ws"
-      }
-    },
-    {
-      "type": "trojan", // <--- 新增 Trojan 入站
-      "tag": "trojan-tls",
-      "listen": "::",
-      "listen_port": $vless_port, // <--- 共享端口
-      "users": [
-        {
-          "password": "$password"
-        }
-      ],
-      "tls": {
-        "enabled": true,
-        "alpn": [
-          "h2",
-          "http/1.1"
-        ],
-        "certificate_path": "$work_dir/cert.pem",
-        "key_path": "$work_dir/private.key"
-      }
-    },
-    {
       "type": "vmess",
-      "tag": "vmess-ws-tls",
+      "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": $vless_port, // <--- 共享端口
+      "listen_port": 8001,
       "users": [
         {
           "uuid": "$uuid"
         }
       ],
-      "tls": { // <--- 启用 TLS
-        "enabled": true,
-        "alpn": [
-          "h2",
-          "http/1.1"
-        ],
-        "certificate_path": "$work_dir/cert.pem",
-        "key_path": "$work_dir/private.key"
-      },
       "transport": {
         "type": "ws",
-        "path": "/vmess-ws"
+        "path": "/vmess-argo",
+        "early_data_header_name": "Sec-WebSocket-Protocol"
+      }
+    },
+    {
+      "type": "vless",
+      "tag": "vless-ws",
+      "listen": "::",
+      "listen_port": 8001,
+      "users": [
+        {
+          "uuid": "$uuid",
+          "flow": ""
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/vless-argo",
+        "early_data_header_name": "Sec-WebSocket-Protocol"
+      }
+    },
+    {
+      "type": "trojan",
+      "tag": "trojan-ws",
+      "listen": "::",
+      "listen_port": 8001,
+      "users": [
+        {
+          "password": "$uuid"
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/trojan-argo",
+        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
     {
@@ -582,22 +560,16 @@ get_info() {
 
   green "\nArgoDomain：${purple}$argodomain${re}\n"
 
-VLESS_URL="vless://${uuid}@${server_ip}:${vless_port}?encryption=none&security=tls&sni=bing.com&alpn=h2,http/1.1&host=bing.com&path=/vless-ws&type=ws#${isp}_vless-ws-tls"
+  VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-# VMESS 链接 - 更改为 VMess-WS-TLS
-VMESS_JSON="{ \"v\": \"2\", \"ps\": \"${isp}_vmess-ws-tls\", \"add\": \"${server_ip}\", \"port\": \"${vless_port}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"bing.com\", \"path\": \"/vmess-ws\", \"tls\": \"tls\", \"sni\": \"bing.com\", \"alpn\": \"h2,http/1.1\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
-VMESS_URL="vmess://$(echo "$VMESS_JSON" | base64 -w0)"
+  cat > ${work_dir}/url.txt <<EOF
+vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
-# TROJAN 链接 - 新增 Trojan-TLS
-TROJAN_URL="trojan://${password}@${server_ip}:${vless_port}?security=tls&sni=bing.com&alpn=h2,http/1.1#${isp}_trojan-tls"
+vmess://$(echo "$VMESS" | base64 -w0)
 
-# 更新 url.txt
-cat > ${work_dir}/url.txt <<EOF
-$VLESS_URL
+vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&alpn=http/1.1&fp=firefox&type=ws&host=${argodomain}&path=/vless-argo?ed=2560#${isp}_vless_argo
 
-$VMESS_URL
-
-$TROJAN_URL
+trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&alpn=http/1.1&fp=firefox&type=ws&host=${argodomain}&path=/trojan-argo?ed=2560#${isp}_trojan_argo
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -1530,6 +1502,8 @@ ArgoDomain=$get_argodomain
 # 更新Argo域名到订阅
 change_argo_domain() {
 content=$(cat "$client_dir")
+
+# 更新 vmess
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
 vmess_prefix="vmess://"
 encoded_vmess="${vmess_url#"$vmess_prefix"}"
@@ -1537,11 +1511,26 @@ decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
 updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
 encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
 new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
+
+# 更新 vless-argo
+vless_argo_url=$(grep 'vless://.*vless_argo' "$client_dir")
+new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/sni=[^&]*&/sni=$ArgoDomain\&/" | sed "s/host=[^&]*&/host=$ArgoDomain\&/")
+
+# 更新 trojan-argo
+trojan_argo_url=$(grep 'trojan://.*trojan_argo' "$client_dir")
+new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/sni=[^&]*&/sni=$ArgoDomain\&/" | sed "s/host=[^&]*&/host=$ArgoDomain\&/")
+
+# 应用所有更新
 new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
+new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
+
 echo "$new_content" > "$client_dir"
 base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "vmess节点已更新,更新订阅或手动复制以下vmess-argo节点\n"
-purple "$new_vmess_url\n" 
+green "所有argo节点已更新\n"
+purple "vmess: $new_vmess_url\n"
+purple "vless: $new_vless_argo_url\n" 
+purple "trojan: $new_trojan_argo_url\n"
 }
 
 # 查看节点信息和订阅链接
