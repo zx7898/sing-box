@@ -233,11 +233,6 @@ install_singbox() {
     tuic_port=$(($vless_port + 2))
     hy2_port=$(($vless_port + 3)) 
     socks5_port=$(($vless_port + 4))
-    # Argo 内部端口定义
-    argo_proxy_port=8001      # Nginx监听的入口，cloudflared连接此端口
-    vmess_ws_port=8002        # Singbox VMess 监听
-    vless_ws_port=8003        # Singbox VLESS 监听
-    trojan_ws_port=8004       # Singbox Trojan 监听
     uuid=$(cat /proc/sys/kernel/random/uuid)
     password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)
     socks5_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)  # 新增 SOCKS5 用户名
@@ -310,7 +305,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": $vmess_ws_port,
+      "listen_port": 8001,
       "users": [
         {
           "uuid": "$uuid"
@@ -326,7 +321,7 @@ cat > "${config_dir}" << EOF
       "type": "vless",
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": $vless_ws_port,
+      "listen_port": 8001,
       "users": [
         {
           "uuid": "$uuid",
@@ -343,7 +338,7 @@ cat > "${config_dir}" << EOF
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": $trojan_ws_port,
+      "listen_port": 8001,
       "users": [
         {
           "password": "$uuid"
@@ -543,61 +538,6 @@ EOF
 
 }
 
-# 配置Nginx作为Argo的分流网关 (Port 8001)
-add_argo_nginx_conf() {
-    # 配置目录通常是 /etc/nginx/conf.d/
-    mkdir -p /etc/nginx/conf.d
-    
-    cat > /etc/nginx/conf.d/argo_proxy.conf << EOF
-server {
-    listen 8001;
-    listen [::]:8001;
-    server_name localhost;
-
-    # VMess WebSocket
-    location /vmess-argo {
-        proxy_pass http://127.0.0.1:8002;
-        proxy_redirect off;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-
-    # VLESS WebSocket
-    location /vless-argo {
-        proxy_pass http://127.0.0.1:8003;
-        proxy_redirect off;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-
-    # Trojan WebSocket
-    location /trojan-argo {
-        proxy_pass http://127.0.0.1:8004;
-        proxy_redirect off;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade \$http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host \$host;
-    }
-
-    # 默认
-    location / {
-        return 404;
-    }
-}
-EOF
-    # 重载Nginx
-    if nginx -t > /dev/null 2>&1; then
-        nginx -s reload > /dev/null 2>&1 || restart_nginx
-    else
-        restart_nginx
-    fi
-}
-
 # 生成节点和订阅链接
 get_info() {  
   yellow "\nip检测中,请稍等...\n"
@@ -627,9 +567,9 @@ vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}_vless_argo
+vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2560&sni=${argodomain}&fp=firefox#${isp}_argo
 
-trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}_trojan_argo
+trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2560&sni=${argodomain}&fp=firefox#${isp}_argo
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -1475,7 +1415,6 @@ ingress:
     originRequest:
       noTLSVerify: true
   - service: http_status:404
-  
 EOF
 
                 if command_exists rc-service 2>/dev/null; then
@@ -1563,9 +1502,6 @@ ArgoDomain=$get_argodomain
 # 更新Argo域名到订阅
 change_argo_domain() {
 content=$(cat "$client_dir")
-server_ip=$(get_realip)
-
-# 更新 VMess
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
 vmess_prefix="vmess://"
 encoded_vmess="${vmess_url#"$vmess_prefix"}"
@@ -1573,20 +1509,42 @@ decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
 updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
 encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
 new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
+# 更新 VLESS Argo
+vless_argo_url=$(grep -o 'vless://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo")
+if [ -n "$vless_argo_url" ]; then
+    new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
+else
+    new_vless_argo_url="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&type=ws&host=${ArgoDomain}&path=%2Fvless-argo%3Fed%3D2560&sni=${ArgoDomain}&fp=firefox#${isp}_argo"
+fi
+
+# 更新 Trojan Argo
+trojan_argo_url=$(grep -o 'trojan://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo")
+if [ -n "$trojan_argo_url" ]; then
+    new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
+else
+    new_trojan_argo_url="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${ArgoDomain}&path=%2Ftrojan-argo%3Fed%3D2560&sni=${ArgoDomain}&fp=firefox#${isp}_argo"
+fi
+
+# 合并所有更新
 new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+if [ -n "$vless_argo_url" ]; then
+    new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
+else
+    new_content=$(echo -e "$new_content\n$new_vless_argo_url")
+fi
 
-# 更新 VLESS
-new_content=$(echo "$new_content" | sed "s|vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=[^&]*|vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ArgoDomain}|g")
-
-# 更新 Trojan
-new_content=$(echo "$new_content" | sed "s|trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=[^&]*|trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${ArgoDomain}|g")
+if [ -n "$trojan_argo_url" ]; then
+    new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
+else
+    new_content=$(echo -e "$new_content\n$new_trojan_argo_url")
+fi
 
 echo "$new_content" > "$client_dir"
 base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "所有Argo隧道节点已更新,更新订阅或手动复制以下节点\n"
-grep -E '(vmess|vless|trojan)://' "$client_dir" | while read -r line; do
-    purple "$line\n"
-done
+green "Argo隧道节点已更新,更新订阅或手动复制以下节点\n"
+purple "$new_vmess_url\n"
+purple "$new_vless_argo_url\n" 
+purple "$new_trojan_argo_url\n"
 }
 
 # 查看节点信息和订阅链接
@@ -1650,6 +1608,8 @@ change_cfip() {
     fi
 
 content=$(cat "$client_dir")
+
+# 更新 VMESS
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
 encoded_part="${vmess_url#vmess://}"
 decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
@@ -1657,11 +1617,27 @@ updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$c
     '.add = $cfip | .port = $cfport')
 new_encoded_part=$(echo "$updated_json" | base64 -w0)
 new_vmess_url="vmess://$new_encoded_part"
+
+# 更新 VLESS Argo
+vless_argo_url=$(grep -o 'vless://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo")
+new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/@[^:]*:/@$cfip:/" | sed "s/:[0-9]*?/?/")
+
+# 更新 Trojan Argo  
+trojan_argo_url=$(grep -o 'trojan://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo")
+new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/@[^:]*:/@$cfip:/" | sed "s/:[0-9]*?/?/")
+
+# 合并更新
 new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
+new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
+
 echo "$new_content" > "$client_dir"
 base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-green "\nvmess节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下vmess-argo节点${re}\n"
+green "\n优选域名已更新为：${purple}${cfip}:${cfport}${re}\n"
+green "更新订阅或手动复制以下节点：\n"
 purple "$new_vmess_url\n"
+purple "$new_vless_argo_url\n"
+purple "$new_trojan_argo_url\n"
 }
 
 # 主菜单
