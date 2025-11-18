@@ -242,7 +242,7 @@ socks5_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)  # 新增 SOCKS5 �
     public_key=$(echo "${output}" | awk '/PublicKey:/ {print $2}')
 
     # 放行端口
-    allow_port $vless_port/tcp $nginx_port/tcp $tuic_port/udp $hy2_port/udp $socks5_port/tcp > /dev/null 2>&1
+    allow_port $vless_port/tcp $nginx_port/tcp $tuic_port/udp $hy2_port/udp $socks5_port/tcp 8001/tcp > /dev/null 2>&1
 
     # 生成自签名证书
     openssl ecparam -genkey -name prime256v1 -out "${work_dir}/private.key"
