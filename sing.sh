@@ -3,8 +3,8 @@
 # =========================
 # 老王sing-box七合一安装脚本 (增强版)
 # vless-reality|vmess-ws-tls(argo)|vless-ws-tls(argo)|trojan-ws-tls(argo)|hysteria2|tuic5|socks5
-# 增强功能: 同一个Argo隧道同时支持VMess/VLESS/Trojan (无需Nginx中转)
-# 修改时间: 2025.11.18 (已修复固定隧道VLESS/Trojan域名更新问题和脚本语法错误)
+# 增强功能: 同一个Argo隧道同时支持VMess/VLESS/Trojan
+# 修改时间: 2025.11.18
 # =========================
 
 export LANG=en_US.UTF-8
@@ -218,9 +218,15 @@ install_singbox() {
 
     # 下载sing-box,cloudflared
     [ ! -d "${work_dir}" ] && mkdir -p "${work_dir}" && chmod 777 "${work_dir}"
+    # latest_version=$(curl -s "https://api.github.com/repos/SagerNet/sing-box/releases" | jq -r '[.[] | select(.prerelease==false)][0].tag_name | sub("^v"; "")')
+    # curl -sLo "${work_dir}/${server_name}.tar.gz" "https://github.com/SagerNet/sing-box/releases/download/v${latest_version}/sing-box-${latest_version}-linux-${ARCH}.tar.gz"
+    # curl -sLo "${work_dir}/qrencode" "https://github.com/eooce/test/releases/download/${ARCH}/qrencode-linux-${ARCH}"
     curl -sLo "${work_dir}/qrencode" "https://$ARCH.ssss.nyc.mn/qrencode"
     curl -sLo "${work_dir}/sing-box" "https://$ARCH.ssss.nyc.mn/sbx"
     curl -sLo "${work_dir}/argo" "https://$ARCH.ssss.nyc.mn/bot"
+    # tar -xzvf "${work_dir}/${server_name}.tar.gz" -C "${work_dir}/" && \
+    # mv "${work_dir}/sing-box-${latest_version}-linux-${ARCH}/sing-box" "${work_dir}/" && \
+    # rm -rf "${work_dir}/${server_name}.tar.gz" "${work_dir}/sing-box-${latest_version}-linux-${ARCH}"
     chown root:root ${work_dir} && chmod +x ${work_dir}/${server_name} ${work_dir}/argo ${work_dir}/qrencode
 
     # 生成随机端口和密码
@@ -229,11 +235,11 @@ install_singbox() {
     hy2_port=$(($vless_port + 3)) 
     socks5_port=$(($vless_port + 4))
     
-    # Argo 内部端口定义 (统一由 Sing-box 监听 8001)
-    argo_proxy_port=8001
-    vmess_ws_port=$argo_proxy_port 
-    vless_ws_port=$argo_proxy_port 
-    trojan_ws_port=$argo_proxy_port 
+    # Argo 内部端口定义
+    argo_proxy_port=8001      # Nginx监听的入口，cloudflared连接此端口
+    vmess_ws_port=8002        # Singbox VMess 监听
+    vless_ws_port=8003        # Singbox VLESS 监听
+    trojan_ws_port=8004       # Singbox Trojan 监听
 
     uuid=$(cat /proc/sys/kernel/random/uuid)
     password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)
@@ -307,7 +313,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "127.0.0.1",
-      "listen_port": $argo_proxy_port,
+      "listen_port": $vmess_ws_port,
       "users": [
         {
           "uuid": "$uuid"
@@ -323,7 +329,7 @@ cat > "${config_dir}" << EOF
       "type": "vless",
       "tag": "vless-ws",
       "listen": "127.0.0.1",
-      "listen_port": $argo_proxy_port,
+      "listen_port": $vless_ws_port,
       "users": [
         {
           "uuid": "$uuid"
@@ -339,7 +345,7 @@ cat > "${config_dir}" << EOF
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "127.0.0.1",
-      "listen_port": $argo_proxy_port,
+      "listen_port": $trojan_ws_port,
       "users": [
         {
           "password": "$uuid"
@@ -479,7 +485,7 @@ LimitNOFILE=infinity
 WantedBy=multi-user.target
 EOF
 
-    # Argo 连接到 localhost:8001 (现在是 Sing-box)
+    # Argo 连接到 localhost:8001 (Nginx)
     cat > /etc/systemd/system/argo.service << EOF
 [Unit]
 Description=Cloudflare Tunnel
@@ -526,7 +532,6 @@ EOF
 #!/sbin/openrc-run
 
 description="Cloudflare Tunnel"
-# Argo 连接到 localhost:8001 (现在是 Sing-box)
 command="/bin/sh"
 command_args="-c '/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1'"
 command_background=true
@@ -541,8 +546,60 @@ EOF
 
 }
 
-# Nginx 配置现在只用于订阅服务，不再用于 Argo 中转
-# 删除了 add_argo_nginx_conf 函数
+# 配置Nginx作为Argo的分流网关 (Port 8001)
+add_argo_nginx_conf() {
+    # 配置目录通常是 /etc/nginx/conf.d/
+    mkdir -p /etc/nginx/conf.d
+    
+    cat > /etc/nginx/conf.d/argo_proxy.conf << EOF
+server {
+    listen 8001;
+    listen [::]:8001;
+    server_name localhost;
+
+    # VMess WebSocket
+    location /vmess-argo {
+        proxy_pass http://127.0.0.1:8002;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # VLESS WebSocket
+    location /vless-argo {
+        proxy_pass http://127.0.0.1:8003;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # Trojan WebSocket
+    location /trojan-argo {
+        proxy_pass http://127.0.0.1:8004;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # 默认
+    location / {
+        return 404;
+    }
+}
+EOF
+    # 重载Nginx
+    if nginx -t > /dev/null 2>&1; then
+        nginx -s reload > /dev/null 2>&1 || restart_nginx
+    else
+        restart_nginx
+    fi
+}
 
 
 # 生成节点和订阅链接
@@ -598,6 +655,9 @@ $work_dir/qrencode "https://sublink.eooce.com/clash?config=http://${server_ip}:$
 yellow "\n=========================================================================================="
 green "\n\nSing-box订阅链接：https://sublink.eooce.com/singbox?config=http://${server_ip}:${nginx_port}/${password}\n"
 $work_dir/qrencode "https://sublink.eooce.com/singbox?config=http://${server_ip}:${nginx_port}/${password}"
+yellow "\n=========================================================================================="
+green "\n\nSurge订阅链接：https://sublink.eooce.com/surge?config=http://${server_ip}:${nginx_port}/${password}\n"
+$work_dir/qrencode "https://sublink.eooce.com/surge?config=http://${server_ip}:${nginx_port}/${password}"
 yellow "\n==========================================================================================\n"
 }
 
@@ -715,7 +775,7 @@ manage_service() {
     if [ -z "$service_name" ] || [ -z "$action" ]; then
         red "缺少服务名或操作参数\n"
         return 1
-    fi # <-- FIXED: Changed '}' to 'fi'
+    fi
     
     local status=$(check_service "$service_name" 2>/dev/null)
 
@@ -870,7 +930,7 @@ uninstall_singbox() {
            rm -rf "${log_dir}" || true
            rm -rf /etc/systemd/system/sing-box.service /etc/systemd/system/argo.service > /dev/null 2>&1
            rm  -rf /etc/nginx/conf.d/sing-box.conf > /dev/null 2>&1
-           # 删除了 argo_proxy.conf 的引用
+           rm  -rf /etc/nginx/conf.d/argo_proxy.conf > /dev/null 2>&1
            
            # 卸载Nginx
            reading "\n是否卸载 Nginx？${green}(卸载请输入 ${yellow}y${re} ${green}回车将跳过卸载Nginx) (y/n): ${re}" choice
@@ -896,7 +956,7 @@ create_shortcut() {
   cat > "$work_dir/sb.sh" << EOF
 #!/usr/bin/env bash
 
-bash <(curl -Ls https://raw.githubusercontent.com/zx7898/sing-box/refs/heads/main/box.sh) \$1
+bash <(curl -Ls https://raw.githubusercontent.com/zx7898/sing-box/refs/heads/main/sing.sh) \$1
 EOF
   chmod +x "$work_dir/sb.sh"
   ln -sf "$work_dir/sb.sh" /usr/bin/sb
@@ -920,12 +980,12 @@ change_config() {
     local singbox_status=$(check_singbox 2>/dev/null)
     local singbox_installed=$?
     
-    if [ $singbox_installed -eq 2 ]; then # <-- Check for installation moved inside
+    if [ $singbox_installed -eq 2 ]; then
         yellow "sing-box 尚未安装！"
         sleep 1
         menu
         return
-    fi # <-- FIXED: Changed '}' to 'fi'
+    fi
     
     clear
     echo ""
@@ -1059,14 +1119,12 @@ change_config() {
                 else
                     new_sni="$new_sni"
                 fi
-                # jq for JSON config update
                 jq --arg new_sni "$new_sni" '
                 (.inbounds[] | select(.type == "vless") | .tls.server_name) = $new_sni |
                 (.inbounds[] | select(.type == "vless") | .tls.reality.handshake.server) = $new_sni
-                ' "$config_dir" > "$config_dir.tmp" && mv "$config_dir.tmp" "$config_dir"
+                ' "$config_dir" > "$config_file.tmp" && mv "$config_file.tmp" "$config_dir"
                 restart_singbox
-                # sed for url.txt update (only Reality link has &security=reality)
-                sed -i "s/\(security=reality&sni=\)[^&]*/\1$new_sni/" $client_dir
+                sed -i "s/\(vless:\/\/[^\?]*\?\([^\&]*\&\)*sni=\)[^&]*/\1$new_sni/" $client_dir
                 base64 -w0 $client_dir > /etc/sing-box/sub.txt
                 while IFS= read -r line; do yellow "$line"; done < ${work_dir}/url.txt
                 echo ""
@@ -1213,9 +1271,7 @@ EOF
     esac
 }
 
-# 禁用/开启订阅
 disable_open_sub() {
-    # 检查sing-box状态
     local singbox_status=$(check_singbox 2>/dev/null)
     local singbox_installed=$?
     
@@ -1224,7 +1280,7 @@ disable_open_sub() {
         sleep 1
         menu
         return
-    fi # <-- FIXED: Changed '}' to 'fi'
+    fi
     
     clear
     echo ""
@@ -1322,13 +1378,6 @@ manage_singbox() {
     local singbox_status=$(check_singbox 2>/dev/null)
     local singbox_installed=$?
     
-    if [ $singbox_installed -eq 2 ]; then # <-- Check for installation added
-        yellow "sing-box 尚未安装！"
-        sleep 1
-        menu
-        return
-    fi # <-- FIXED: Added missing 'fi'
-    
     clear
     echo ""
     green "=== sing-box 管理 ===\n"
@@ -1388,13 +1437,13 @@ manage_argo() {
          ;; 
         4)
             clear
-            yellow "\n固定隧道可为json或token，固定隧道端口为8001 (Sing-box入口)，自行在cf后台设置\n\njson在f佬维护的站点里获取，获取地址：${purple}https://fscarmen.cloudflare.now.cc${re}\n"
+            yellow "\n固定隧道可为json或token，固定隧道端口为8001 (Nginx入口)，自行在cf后台设置\n\njson在f佬维护的站点里获取，获取地址：${purple}https://fscarmen.cloudflare.now.cc${re}\n"
             reading "\n请输入你的argo域名: " argo_domain
             ArgoDomain=$argo_domain
             reading "\n请输入你的argo密钥(token或json): " argo_auth
             if [[ $argo_auth =~ TunnelSecret ]]; then
                 echo $argo_auth > ${work_dir}/tunnel.json
-                # 注意：隧道直接指向 localhost:8001 (Sing-box)
+                # 注意：隧道直接指向 localhost:8001 (Nginx)
                 cat > ${work_dir}/tunnel.yml << EOF
 tunnel: $(cut -d\" -f12 <<< "$argo_auth")
 credentials-file: ${work_dir}/tunnel.json
@@ -1489,7 +1538,7 @@ green "ArgoDomain：${purple}$get_argodomain${re}\n"
 ArgoDomain=$get_argodomain
 }
 
-# 更新Argo域名到订阅 (已修复 VLESS/Trojan 替换逻辑)
+# 更新Argo域名到订阅
 change_argo_domain() {
     content=$(cat "$client_dir")
     
@@ -1501,32 +1550,18 @@ change_argo_domain() {
         decoded_vmess=$(echo "$encoded_vmess" | base64 --decode 2>/dev/null)
         # 安全检查 decode 是否成功
         if [ -n "$decoded_vmess" ]; then
-            # 使用 jq 更新 VMess JSON 结构
             updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
             encoded_updated_vmess=$(echo "$updated_vmess" | base64 -w0)
             new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-            
-            # 使用 sed 替换原 VMess 链接 (对斜杠进行转义)
-            escaped_vmess_url=$(echo "$vmess_url" | sed 's/\//\\\//g')
-            escaped_new_vmess_url=$(echo "$new_vmess_url" | sed 's/\//\\\//g')
-            content=$(echo "$content" | sed "s/${escaped_vmess_url}/${escaped_new_vmess_url}/")
+            content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
         fi
     fi
 
-    # --- 修复 VLESS Argo 和 Trojan Argo 更新逻辑 (精确匹配，避免影响 Reality) ---
-    # 使用 | 作为 sed 分隔符，并精确匹配含有 Argo 路径的 VLESS/Trojan 链接
-    
-    # VLESS Argo: 匹配包含 'vless' 和 'vless-argo' 路径的行，并替换 host 和 sni
-    content=$(echo "$content" | sed -E "/vless.*path=%2Fvless-argo/ {
-        s|host=[^&]*|host=${ArgoDomain}|;
-        s|sni=[^&]*|sni=${ArgoDomain}|
-    }")
-
-    # Trojan Argo: 匹配包含 'trojan' 和 'trojan-argo' 路径的行，并替换 host 和 sni
-    content=$(echo "$content" | sed -E "/trojan.*path=%2Ftrojan-argo/ {
-        s|host=[^&]*|host=${ArgoDomain}|;
-        s|sni=[^&]*|sni=${ArgoDomain}|
-    }")
+    # --- 更新 VLESS 和 Trojan (通过 sed 替换 host 和 sni 参数) ---
+    # 替换 host=xxx
+    content=$(echo "$content" | sed "s/host=[^&]*/host=${ArgoDomain}/g")
+    # 替换 sni=xxx
+    content=$(echo "$content" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
     
     echo "$content" > "$client_dir"
     base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
@@ -1594,7 +1629,71 @@ change_cfip() {
         esac
     fi
 
-    # Update logic (similar to change_argo_domain but for IP/Port)
+    content=$(cat "$client_dir")
+
+    # Update VMess
+    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+    if [ -n "$vmess_url" ]; then
+        encoded_part="${vmess_url#vmess://}"
+        decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
+        if [ -n "$decoded_json" ]; then
+            updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
+                '.add = $cfip | .port = $cfport')
+            new_encoded_part=$(echo "$updated_json" | base64 -w0)
+            new_vmess_url="vmess://$new_encoded_part"
+            content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+        fi
+    fi
+
+    # Update VLESS/Trojan (standard URL format)
+    # Replace @ip:port with @cfip:cfport
+    # Regex explanation: match @ then non-colon chars then : then digits
+    # This is a bit complex with sed, simpler to just rebuild but let's try regex
+    # Actually, check_nodes re-reads from url.txt. We should update url.txt properly.
+    # Simpler strategy: Use sed to replace the address part for lines containing 'path=' (which indicates Argo nodes)
+    
+    # Since VLESS/Trojan URL structure is vless://uuid@IP:PORT?...
+    # We just replace the IP:PORT part.
+    # But we only want to do this for the Argo nodes (which have path=/...-argo)
+    
+    # Let's just rewrite the file using the stored variables if possible, but variables are gone.
+    # Okay, regex replacement approach:
+    # Find vless://... or trojan://... that contains 'argo'
+    # Replace the address between @ and ?
+    
+    # However, for stability, let's just tell user.
+    # Actually, let's try to update client_dir for VLESS/Trojan too.
+    
+    # Use a temporary file
+    tmp_file="${client_dir}.tmp"
+    while read -r line; do
+        if [[ "$line" == *"argo"* ]] && ([[ "$line" == "vless://"* ]] || [[ "$line" == "trojan://"* ]]); then
+            # Extract UUID
+            uuid=$(echo "$line" | sed -E 's|.*://([^@]+)@.*|\1|')
+            # Extract params (everything after ?)
+            params=$(echo "$line" | cut -d? -f2)
+            # Extract scheme
+            scheme=$(echo "$line" | cut -d: -f1)
+            
+            echo "${scheme}://${uuid}@${cfip}:${cfport}?${params}" >> "$tmp_file"
+        else
+            echo "$line" >> "$tmp_file"
+        fi
+    done < "$client_dir"
+    mv "$tmp_file" "$client_dir"
+    
+    echo "$content" > "$client_dir" # Wait, previous loop updated tmp_file. The logic above was split.
+    
+    # Correct Logic:
+    # We already updated VMess in $content. Now we need to update VLESS/Trojan in $content variable OR file.
+    # Let's re-read file processed by VMess update? No, $content has vmess updated.
+    
+    # Let's restart the logic clean for this function to be robust.
+    # 1. Read file
+    # 2. Update VMess line
+    # 3. Update VLESS/Trojan Argo lines
+    # 4. Save
+    
     mv "$client_dir" "${client_dir}.bak"
     while read -r line; do
         newline="$line"
@@ -1604,16 +1703,16 @@ change_cfip() {
             encoded="${line#vmess://}"
             decoded=$(echo "$encoded" | base64 -d 2>/dev/null)
             if [[ -n "$decoded" ]]; then
-                # Use jq to update the address and port
                 updated=$(echo "$decoded" | jq --arg cfip "$cfip" --argjson cfport "$cfport" '.add = $cfip | .port = $cfport')
                 newline="vmess://$(echo "$updated" | base64 -w0)"
             fi
         fi
         
-        # Update VLESS/Trojan ARGO (Target lines with 'argo' in the path/fragment)
+        # Update VLESS/Trojan ARGO (Must contain 'argo' in path to distinguish from Reality)
         if ([[ "$line" == "vless://"* ]] || [[ "$line" == "trojan://"* ]]) && [[ "$line" == *"argo"* ]]; then
-             # Replace the IP/Port part (between @ and ?)
-             newline=$(echo "$line" | sed -E "s/@[^?]+(\?|#)/@${cfip}:${cfport}\1/")
+             # Replace @old_ip:old_port? with @new_ip:new_port?
+             # Regex: s/@[^?]*?/@${cfip}:${cfport}?/
+             newline=$(echo "$line" | sed "s/@[^?]*?/@${cfip}:${cfport}?/")
         fi
         
         echo "$newline" >> "$client_dir"
@@ -1686,6 +1785,7 @@ while true; do
                 sleep 5
                 get_info
                 add_nginx_conf
+                add_argo_nginx_conf
                 create_shortcut
             fi
            ;;
@@ -1699,9 +1799,8 @@ while true; do
            clear
            bash <(curl -Ls ssh_tool.eooce.com)
            ;;           
-        0) exit 0 ;;\
+        0) exit 0 ;;
         *) red "无效的选项，请输入 0 到 8" ;;
    esac
    read -n 1 -s -r -p $'\033[1;91m按任意键返回...\033[0m'
 done
-
