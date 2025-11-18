@@ -4,7 +4,7 @@
 # 老王sing-box七合一安装脚本 (增强版)
 # vless-reality|vmess-ws-tls(argo)|vless-ws-tls(argo)|trojan-ws-tls(argo)|hysteria2|tuic5|socks5
 # 增强功能: 同一个Argo隧道同时支持VMess/VLESS/Trojan (无需Nginx中转)
-# 修改时间: 2025.11.18 (已修复固定隧道VLESS/Trojan域名更新问题)
+# 修改时间: 2025.11.18 (已修复固定隧道VLESS/Trojan域名更新问题和脚本语法错误)
 # =========================
 
 export LANG=en_US.UTF-8
@@ -715,7 +715,7 @@ manage_service() {
     if [ -z "$service_name" ] || [ -z "$action" ]; then
         red "缺少服务名或操作参数\n"
         return 1
-    }
+    fi # <-- FIXED: Changed '}' to 'fi'
     
     local status=$(check_service "$service_name" 2>/dev/null)
 
@@ -920,12 +920,12 @@ change_config() {
     local singbox_status=$(check_singbox 2>/dev/null)
     local singbox_installed=$?
     
-    if [ $singbox_installed -eq 2 ]; then
+    if [ $singbox_installed -eq 2 ]; then # <-- Check for installation moved inside
         yellow "sing-box 尚未安装！"
         sleep 1
         menu
         return
-    }
+    fi # <-- FIXED: Changed '}' to 'fi'
     
     clear
     echo ""
@@ -1215,6 +1215,7 @@ EOF
 
 # 禁用/开启订阅
 disable_open_sub() {
+    # 检查sing-box状态
     local singbox_status=$(check_singbox 2>/dev/null)
     local singbox_installed=$?
     
@@ -1223,7 +1224,7 @@ disable_open_sub() {
         sleep 1
         menu
         return
-    }
+    fi # <-- FIXED: Changed '}' to 'fi'
     
     clear
     echo ""
@@ -1320,6 +1321,13 @@ manage_singbox() {
     # 检查sing-box状态
     local singbox_status=$(check_singbox 2>/dev/null)
     local singbox_installed=$?
+    
+    if [ $singbox_installed -eq 2 ]; then # <-- Check for installation added
+        yellow "sing-box 尚未安装！"
+        sleep 1
+        menu
+        return
+    fi # <-- FIXED: Added missing 'fi'
     
     clear
     echo ""
@@ -1691,8 +1699,9 @@ while true; do
            clear
            bash <(curl -Ls ssh_tool.eooce.com)
            ;;           
-        0) exit 0 ;;
+        0) exit 0 ;;\
         *) red "无效的选项，请输入 0 到 8" ;;
    esac
    read -n 1 -s -r -p $'\033[1;91m按任意键返回...\033[0m'
 done
+
