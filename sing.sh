@@ -234,7 +234,6 @@ install_singbox() {
     hy2_port=$(($vless_port + 3)) 
     socks5_port=$(($vless_port + 4))
     uuid=$(cat /proc/sys/kernel/random/uuid)
-    trojan_password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)  # 新增 Trojan 密码
     password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)
     socks5_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)  # 新增 SOCKS5 用户名
 socks5_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)  # 新增 SOCKS5 密码
@@ -322,7 +321,7 @@ cat > "${config_dir}" << EOF
       "type": "vless",
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8002,
+      "listen_port": 8001,
       "users": [
         {
           "uuid": "$uuid",
@@ -339,10 +338,10 @@ cat > "${config_dir}" << EOF
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8003,
+      "listen_port": 8001,
       "users": [
         {
-          "password": "$trojan_password"
+          "password": "$uuid"
         }
       ],
       "transport": {
@@ -488,7 +487,7 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 TimeoutStartSec=0
-ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001 --url http://localhost:8002 --url http://localhost:8003 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1"
+ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1"
 Restart=on-failure
 RestartSec=5s
 
@@ -526,7 +525,7 @@ EOF
 
 description="Cloudflare Tunnel"
 command="/bin/sh"
-command_args="-c '/etc/sing-box/argo tunnel --url http://localhost:8001 --url http://localhost:8002 --url http://localhost:8003 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1'"
+command_args="-c '/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1'"
 command_background=true
 pidfile="/var/run/argo.pid"
 EOF
@@ -568,9 +567,9 @@ vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-vless://${uuid}@${CFIP}:${CFPORT}?type=ws&security=tls&path=%2Fvless-argo&host=${argodomain}&sni=${argodomain}&fp=firefox#${isp}_vless_argo
+vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}_vless_argo
 
-trojan://${trojan_password}@${CFIP}:${CFPORT}?type=ws&security=tls&path=%2Ftrojan-argo&host=${argodomain}&sni=${argodomain}&fp=firefox#${isp}_trojan_argo
+trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}_trojan_argo
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -1413,20 +1412,10 @@ protocol: http2
 ingress:
   - hostname: $ArgoDomain
     service: http://localhost:8001
-    path: /vmess-argo
-    originRequest:
-      noTLSVerify: true
-  - hostname: $ArgoDomain
-    service: http://localhost:8002
-    path: /vless-argo
-    originRequest:
-      noTLSVerify: true
-  - hostname: $ArgoDomain
-    service: http://localhost:8003
-    path: /trojan-argo
     originRequest:
       noTLSVerify: true
   - service: http_status:404
+  
 EOF
 
                 if command_exists rc-service 2>/dev/null; then
@@ -1514,6 +1503,9 @@ ArgoDomain=$get_argodomain
 # 更新Argo域名到订阅
 change_argo_domain() {
 content=$(cat "$client_dir")
+server_ip=$(get_realip)
+
+# 更新 VMess
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
 vmess_prefix="vmess://"
 encoded_vmess="${vmess_url#"$vmess_prefix"}"
@@ -1522,10 +1514,19 @@ updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host
 encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
 new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
 new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+
+# 更新 VLESS
+new_content=$(echo "$new_content" | sed "s|vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=[^&]*|vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ArgoDomain}|g")
+
+# 更新 Trojan
+new_content=$(echo "$new_content" | sed "s|trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=[^&]*|trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${ArgoDomain}|g")
+
 echo "$new_content" > "$client_dir"
 base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "vmess节点已更新,更新订阅或手动复制以下vmess-argo节点\n"
-purple "$new_vmess_url\n" 
+green "所有Argo隧道节点已更新,更新订阅或手动复制以下节点\n"
+grep -E '(vmess|vless|trojan)://' "$client_dir" | while read -r line; do
+    purple "$line\n"
+done
 }
 
 # 查看节点信息和订阅链接
