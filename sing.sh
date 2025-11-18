@@ -413,6 +413,10 @@ cat > "${config_dir}" << EOF
       "tag": "block"
     },
     {
+      "type": "dns",
+      "tag": "dns-out"
+    }
+    {
       "type": "wireguard",
       "tag": "wireguard-out",
       "server": "engage.cloudflareclient.com",
@@ -445,6 +449,14 @@ cat > "${config_dir}" << EOF
       }
     ],
     "rules": [
+      {
+        "protocol": "dns",
+        "outbound": "dns-out"
+      },
+      {
+        "ip_is_private": true,
+        "outbound": "direct"
+      },
       {
         "rule_set": ["openai", "netflix"],
         "outbound": "wireguard-out"
