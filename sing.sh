@@ -317,28 +317,27 @@ cat > "${config_dir}" << EOF
         "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
-    {
+    {  // <<< 新增 VLESS-WS 配置
       "type": "vless",
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8001, // 与vmess共享同一端口
       "users": [
         {
-          "uuid": "$uuid",
-          "flow": ""
+          "uuid": "$uuid"
         }
       ],
       "transport": {
         "type": "ws",
-        "path": "/vless-argo",
+        "path": "/vless-argo", // 不同的路径
         "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
-    {
+    {  // <<< 新增 Trojan-WS 配置
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8001, // 与vmess共享同一端口
       "users": [
         {
           "password": "$uuid"
@@ -346,8 +345,7 @@ cat > "${config_dir}" << EOF
       ],
       "transport": {
         "type": "ws",
-        "path": "/trojan-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
+        "path": "/trojan-argo" // 不同的路径
       }
     },
     {
@@ -567,9 +565,9 @@ vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&alpn=http/1.1&fp=firefox&type=ws&host=${argodomain}&path=/vless-argo?ed=2560#${isp}_vless_argo
+vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&host=${argodomain}&type=ws&path=/vless-argo&sni=${argodomain}#${isp}_vless_argo
 
-trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&alpn=http/1.1&fp=firefox&type=ws&host=${argodomain}&path=/trojan-argo?ed=2560#${isp}_trojan_argo
+trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&host=${argodomain}&type=ws&path=/trojan-argo&sni=${argodomain}#${isp}_trojan_argo
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -1043,10 +1041,11 @@ change_config() {
         2)
             reading "\n请输入新的UUID: " new_uuid
             [ -z "$new_uuid" ] && new_uuid=$(cat /proc/sys/kernel/random/uuid)
+            # 增加 Trojan 的 password 替换
             sed -i -E '
                 s/"uuid": "([a-f0-9-]+)"/"uuid": "'"$new_uuid"'"/g;
                 s/"uuid": "([a-f0-9-]+)"$/\"uuid\": \"'$new_uuid'\"/g;
-                s/"password": "([a-f0-9-]+)"/"password": "'"$new_uuid"'"/g
+                s/"password": "([a-f0-9-]+)"/"password": "'"$new_uuid"'"/g  # 增加对trojan/tuic password的替换
             ' $config_dir
 
             restart_singbox
@@ -1502,35 +1501,31 @@ ArgoDomain=$get_argodomain
 # 更新Argo域名到订阅
 change_argo_domain() {
 content=$(cat "$client_dir")
-
-# 更新 vmess
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+vless_ws_url=$(grep 'vless://[^ ]*#.*_vless_argo' "$client_dir") # 查找VLESS-WS节点
+trojan_ws_url=$(grep 'trojan://[^ ]*#.*_trojan_argo' "$client_dir") # 查找Trojan-WS节点
+
+# 1. 更新 VMess
 vmess_prefix="vmess://"
 encoded_vmess="${vmess_url#"$vmess_prefix"}"
-decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
+decoded_vmess=$(echo "$encoded_vmess" | base64 --decode 2>/dev/null)
 updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
-encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
+encoded_updated_vmess=$(echo "$updated_vmess" | base64 -w0)
 new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-
-# 更新 vless-argo
-vless_argo_url=$(grep 'vless://.*vless_argo' "$client_dir")
-new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/sni=[^&]*&/sni=$ArgoDomain\&/" | sed "s/host=[^&]*&/host=$ArgoDomain\&/")
-
-# 更新 trojan-argo
-trojan_argo_url=$(grep 'trojan://.*trojan_argo' "$client_dir")
-new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/sni=[^&]*&/sni=$ArgoDomain\&/" | sed "s/host=[^&]*&/host=$ArgoDomain\&/")
-
-# 应用所有更新
 new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
-new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
-
 echo "$new_content" > "$client_dir"
+
+# 2. 更新 VLESS-WS 和 Trojan-WS
+# 替换VLESS-WS中的host/sni
+sed -i -E "s/vless:\/\/(.*)host=[^&]*&type=ws&path=\/vless-argo&sni=[^#]*/vless:\/\/\1host=$ArgoDomain&type=ws&path=\/vless-argo&sni=$ArgoDomain/" "$client_dir"
+# 替换Trojan-WS中的host/sni
+sed -i -E "s/trojan:\/\/(.*)host=[^&]*&type=ws&path=\/trojan-argo&sni=[^#]*/trojan:\/\/\1host=$ArgoDomain&type=ws&path=\/trojan-argo&sni=$ArgoDomain/" "$client_dir"
+
 base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "所有argo节点已更新\n"
-purple "vmess: $new_vmess_url\n"
-purple "vless: $new_vless_argo_url\n" 
-purple "trojan: $new_trojan_argo_url\n"
+green "vmess/vless/trojan节点已更新Argo域名,请更新订阅或手动复制以下节点\n"
+purple "$(grep 'vmess://' "$client_dir")\n" 
+purple "$(grep 'vless://.*argo' "$client_dir")\n" 
+purple "$(grep 'trojan://' "$client_dir")\n" 
 }
 
 # 查看节点信息和订阅链接
@@ -1595,6 +1590,8 @@ change_cfip() {
 
 content=$(cat "$client_dir")
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+
+# 1. 更新 VMess (保持原有逻辑)
 encoded_part="${vmess_url#vmess://}"
 decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
 updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
@@ -1603,9 +1600,20 @@ new_encoded_part=$(echo "$updated_json" | base64 -w0)
 new_vmess_url="vmess://$new_encoded_part"
 new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
 echo "$new_content" > "$client_dir"
+
+# 2. 更新 VLESS-WS
+# 替换VLESS-WS中的CFIP/CFPORT
+sed -i -E "s/(vless:\/\/[^@]*@)[^:]*:[0-9]*(\?encryption=none&security=tls&host=)/\\1$cfip:$cfport\\2/" "$client_dir"
+
+# 3. 更新 Trojan-WS
+# 替换Trojan-WS中的CFIP/CFPORT
+sed -i -E "s/(trojan:\/\/[^@]*@)[^:]*:[0-9]*(\?security=tls&host=)/\\1$cfip:$cfport\\2/" "$client_dir"
+
 base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-green "\nvmess节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下vmess-argo节点${re}\n"
-purple "$new_vmess_url\n"
+green "\nvmess/vless/trojan节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下节点${re}\n"
+purple "$(grep 'vmess://' "$client_dir")\n"
+purple "$(grep 'vless://.*argo' "$client_dir")\n"
+purple "$(grep 'trojan://' "$client_dir")\n"
 }
 
 # 主菜单
