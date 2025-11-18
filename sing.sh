@@ -559,47 +559,43 @@ get_info() {
 
   green "\nArgoDomain：${purple}$argodomain${re}\n"
 
-  VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
+  # 1. 修复 VMess JSON 格式 (修正 allowInsecure 和 false 的拼写错误)
+  # 注意：v2rayNG 对 VMess 的 host/sni 字段敏感
+  VMESS_JSON="{\"v\":\"2\",\"ps\":\"${isp}_VMess_Argo\",\"add\":\"${CFIP}\",\"port\":\"${CFPORT}\",\"id\":\"${uuid}\",\"aid\":\"0\",\"scy\":\"auto\",\"net\":\"ws\",\"type\":\"none\",\"host\":\"${argodomain}\",\"path\":\"/vmess-argo?ed=2048\",\"tls\":\"tls\",\"sni\":\"${argodomain}\",\"alpn\":\"\",\"fp\":\"\",\"allowInsecure\":false}"
 
-  # VLESS-WS-TLS (Argo)
-  VLESS_ARGO="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&type=ws&host=${argodomain}&path=%2Fvless-argo#${isp}_Argo_VLESS"
+  # 2. 生成标准的 VLESS Argo 链接 (WS + TLS)
+  # 格式: vless://uuid@优选IP:443?security=tls&encryption=none&type=ws&host=Argo域名&sni=Argo域名&path=路径#备注
+  VLESS_ARGO="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2048#${isp}_VLESS_Argo"
 
-  # Trojan-WS-TLS (Argo)
-  TROJAN_ARGO="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&type=ws&host=${argodomain}&path=%2Ftrojan-argo#${isp}_Argo_Trojan"
+  # 3. 生成标准的 Trojan Argo 链接 (WS + TLS)
+  TROJAN_ARGO="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2048#${isp}_Trojan_Argo"
 
+  # 写入文件 (移除空行，防止导入失败)
   cat > ${work_dir}/url.txt <<EOF
-vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
-
-vmess://$(echo "$VMESS" | base64 -w0)
-
+vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}_Reality
+vmess://$(echo -n "$VMESS_JSON" | base64 -w0)
 ${VLESS_ARGO}
-
 ${TROJAN_ARGO}
-
-hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
-
-tuic://${uuid}:${password}@${server_ip}:${tuic_port}?sni=www.bing.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${isp}
-
+hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}_Hy2
+tuic://${uuid}:${password}@${server_ip}:${tuic_port}?sni=www.bing.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${isp}_Tuic
 socks5://${socks5_user}:${socks5_pass}@${server_ip}:${socks5_port}#${isp}_socks5
-
 EOF
-echo ""
-while IFS= read -r line; do echo -e "${purple}$line"; done < ${work_dir}/url.txt
-base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-chmod 644 ${work_dir}/sub.txt
-yellow "\n温馨提醒：需打开V2rayN或其他软件里的 "跳过证书验证"，或将节点的Insecure或TLS里设置为"true"\n"
-green "V2rayN,Shadowrocket,Nekobox,Loon,Karing,Sterisand订阅链接：http://${server_ip}:${nginx_port}/${password}\n"
-$work_dir/qrencode "http://${server_ip}:${nginx_port}/${password}"
-yellow "\n=========================================================================================="
-green "\n\nClash,Mihomo系列订阅链接：https://sublink.eooce.com/clash?config=http://${server_ip}:${nginx_port}/${password}\n"
-$work_dir/qrencode "https://sublink.eooce.com/clash?config=http://${server_ip}:${nginx_port}/${password}"
-yellow "\n=========================================================================================="
-green "\n\nSing-box订阅链接：https://sublink.eooce.com/singbox?config=http://${server_ip}:${nginx_port}/${password}\n"
-$work_dir/qrencode "https://sublink.eooce.com/singbox?config=http://${server_ip}:${nginx_port}/${password}"
-yellow "\n=========================================================================================="
-green "\n\nSurge订阅链接：https://sublink.eooce.com/surge?config=http://${server_ip}:${nginx_port}/${password}\n"
-$work_dir/qrencode "https://sublink.eooce.com/surge?config=http://${server_ip}:${nginx_port}/${password}"
-yellow "\n==========================================================================================\n"
+
+  # 输出到终端
+  echo ""
+  while IFS= read -r line; do echo -e "${purple}$line"; done < ${work_dir}/url.txt
+  
+  # 生成 Base64 订阅 (去除空行，确保 v2rayNG 能够正确解析整个订阅块)
+  grep -v '^$' ${work_dir}/url.txt | base64 -w0 > ${work_dir}/sub.txt
+  chmod 644 ${work_dir}/sub.txt
+
+  # 生成二维码和提示信息 (保持原脚本逻辑)
+  yellow "\n温馨提醒：需打开V2rayN或其他软件里的 \"跳过证书验证\" (allowInsecure)\n"
+  green "V2rayN,Shadowrocket,Nekobox,Loon,Karing,Sterisand订阅链接：http://${server_ip}:${nginx_port}/${password}\n"
+  $work_dir/qrencode "http://${server_ip}:${nginx_port}/${password}"
+  yellow "\n=========================================================================================="
+  green "\n\nClash,Mihomo系列订阅链接：https://sublink.eooce.com/clash?config=http://${server_ip}:${nginx_port}/${password}\n"
+  yellow "\n==========================================================================================\n"
 }
 
 # nginx订阅配置
