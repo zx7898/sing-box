@@ -229,6 +229,7 @@ install_singbox() {
     chown root:root ${work_dir} && chmod +x ${work_dir}/${server_name} ${work_dir}/argo ${work_dir}/qrencode
 
    # 生成随机端口和密码
+    shared_port=$vless_port
     nginx_port=$(($vless_port + 1)) 
     tuic_port=$(($vless_port + 2))
     hy2_port=$(($vless_port + 3)) 
@@ -302,19 +303,73 @@ cat > "${config_dir}" << EOF
       }
     },
     {
-      "type": "vmess",
-      "tag": "vmess-ws",
+      "type": "vless",
+      "tag": "vless-ws-tls",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": $vless_port, // <--- 共享端口
+      "users": [
+        {
+          "uuid": "$uuid",
+          "flow": "xtls-rprx-vision" // flow可以保留，但WS下实际上是无效的
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "server_name": "bing.com",
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "certificate_path": "$work_dir/cert.pem",
+        "key_path": "$work_dir/private.key"
+      },
+      "transport": {
+        "type": "ws",
+        "path": "/vless-ws"
+      }
+    },
+    {
+      "type": "trojan", // <--- 新增 Trojan 入站
+      "tag": "trojan-tls",
+      "listen": "::",
+      "listen_port": $vless_port, // <--- 共享端口
+      "users": [
+        {
+          "password": "$password"
+        }
+      ],
+      "tls": {
+        "enabled": true,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "certificate_path": "$work_dir/cert.pem",
+        "key_path": "$work_dir/private.key"
+      }
+    },
+    {
+      "type": "vmess",
+      "tag": "vmess-ws-tls",
+      "listen": "::",
+      "listen_port": $vless_port, // <--- 共享端口
       "users": [
         {
           "uuid": "$uuid"
         }
       ],
+      "tls": { // <--- 启用 TLS
+        "enabled": true,
+        "alpn": [
+          "h2",
+          "http/1.1"
+        ],
+        "certificate_path": "$work_dir/cert.pem",
+        "key_path": "$work_dir/private.key"
+      },
       "transport": {
         "type": "ws",
-        "path": "/vmess-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
+        "path": "/vmess-ws"
       }
     },
     {
@@ -336,39 +391,6 @@ cat > "${config_dir}" << EOF
         "max_version": "1.3",
         "certificate_path": "$work_dir/cert.pem",
         "key_path": "$work_dir/private.key"
-      }
-    },
-    {
-      "type": "vless",
-      "tag": "vless-ws",
-      "listen": "::",
-      "listen_port": 8001,
-      "users": [
-        {
-          "uuid": "$uuid",
-          "flow": "xtls-rprx-vision"
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/vless-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
-      }
-    },
-    {
-      "type": "trojan",
-      "tag": "trojan-ws",
-      "listen": "::",
-      "listen_port": 8001,
-      "users": [
-        {
-          "password": "$password"
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/trojan-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
     {
@@ -560,16 +582,22 @@ get_info() {
 
   green "\nArgoDomain：${purple}$argodomain${re}\n"
 
-  VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
+VLESS_URL="vless://${uuid}@${server_ip}:${vless_port}?encryption=none&security=tls&sni=bing.com&alpn=h2,http/1.1&host=bing.com&path=/vless-ws&type=ws#${isp}_vless-ws-tls"
 
-  cat > ${work_dir}/url.txt <<EOF
-vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
+# VMESS 链接 - 更改为 VMess-WS-TLS
+VMESS_JSON="{ \"v\": \"2\", \"ps\": \"${isp}_vmess-ws-tls\", \"add\": \"${server_ip}\", \"port\": \"${vless_port}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"bing.com\", \"path\": \"/vmess-ws\", \"tls\": \"tls\", \"sni\": \"bing.com\", \"alpn\": \"h2,http/1.1\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
+VMESS_URL="vmess://$(echo "$VMESS_JSON" | base64 -w0)"
 
-vmess://$(echo "$VMESS" | base64 -w0)
+# TROJAN 链接 - 新增 Trojan-TLS
+TROJAN_URL="trojan://${password}@${server_ip}:${vless_port}?security=tls&sni=bing.com&alpn=h2,http/1.1#${isp}_trojan-tls"
 
-vless://${uuid}@${argodomain}:${CFPORT}?encryption=none&security=tls&host=${argodomain}&path=/vless-argo&headerType=none&type=ws&sni=${argodomain}#${isp}_vless_ws
+# 更新 url.txt
+cat > ${work_dir}/url.txt <<EOF
+$VLESS_URL
 
-trojan://${password}@${argodomain}:${CFPORT}?security=tls&host=${argodomain}&path=/trojan-argo&headerType=none&type=ws&sni=${argodomain}#${isp}_trojan_ws
+$VMESS_URL
+
+$TROJAN_URL
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
