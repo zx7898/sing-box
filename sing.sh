@@ -233,6 +233,11 @@ install_singbox() {
     tuic_port=$(($vless_port + 2))
     hy2_port=$(($vless_port + 3)) 
     socks5_port=$(($vless_port + 4))
+    # Argo 内部端口定义
+    argo_proxy_port=8001      # Nginx监听的入口，cloudflared连接此端口
+    vmess_ws_port=8002        # Singbox VMess 监听
+    vless_ws_port=8003        # Singbox VLESS 监听
+    trojan_ws_port=8004       # Singbox Trojan 监听
     uuid=$(cat /proc/sys/kernel/random/uuid)
     password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)
     socks5_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)  # 新增 SOCKS5 用户名
@@ -305,7 +310,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": $vmess_ws_port,
       "users": [
         {
           "uuid": "$uuid"
@@ -321,7 +326,7 @@ cat > "${config_dir}" << EOF
       "type": "vless",
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": $vless_ws_port,
       "users": [
         {
           "uuid": "$uuid",
@@ -338,7 +343,7 @@ cat > "${config_dir}" << EOF
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": $trojan_ws_port,
       "users": [
         {
           "password": "$uuid"
@@ -536,6 +541,61 @@ EOF
     rc-update add sing-box default > /dev/null 2>&1
     rc-update add argo default > /dev/null 2>&1
 
+}
+
+# 配置Nginx作为Argo的分流网关 (Port 8001)
+add_argo_nginx_conf() {
+    # 配置目录通常是 /etc/nginx/conf.d/
+    mkdir -p /etc/nginx/conf.d
+    
+    cat > /etc/nginx/conf.d/argo_proxy.conf << EOF
+server {
+    listen 8001;
+    listen [::]:8001;
+    server_name localhost;
+
+    # VMess WebSocket
+    location /vmess-argo {
+        proxy_pass http://127.0.0.1:8002;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # VLESS WebSocket
+    location /vless-argo {
+        proxy_pass http://127.0.0.1:8003;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # Trojan WebSocket
+    location /trojan-argo {
+        proxy_pass http://127.0.0.1:8004;
+        proxy_redirect off;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # 默认
+    location / {
+        return 404;
+    }
+}
+EOF
+    # 重载Nginx
+    if nginx -t > /dev/null 2>&1; then
+        nginx -s reload > /dev/null 2>&1 || restart_nginx
+    else
+        restart_nginx
+    fi
 }
 
 # 生成节点和订阅链接
