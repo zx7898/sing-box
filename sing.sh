@@ -648,10 +648,12 @@ server {
 server {
     listen 8001;
     listen [::]:8001;
-    server_name _;
-
-    # vmess-ws 分流到 8002
+    
     location /vmess-argo {
+        if ($http_upgrade != "websocket") {
+            return 404;
+        }
+        proxy_redirect off;
         proxy_pass http://127.0.0.1:8002;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -659,10 +661,15 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 
-    # vless-ws 分流到 8003
     location /vless-argo {
+        if ($http_upgrade != "websocket") {
+            return 404;
+        }
+        proxy_redirect off;
         proxy_pass http://127.0.0.1:8003;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -670,10 +677,15 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
     }
 
-    # trojan-ws 分流到 8004
     location /trojan-argo {
+        if ($http_upgrade != "websocket") {
+            return 404;
+        }
+        proxy_redirect off;
         proxy_pass http://127.0.0.1:8004;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
@@ -681,6 +693,12 @@ server {
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_read_timeout 300s;
+        proxy_send_timeout 300s;
+    }
+
+    location / {
+        return 404;
     }
 }
 EOF
