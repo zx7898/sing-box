@@ -1,8 +1,8 @@
 #!/bin/bash
 
 # =========================
-# 老王sing-box五合一安装脚本
-# vless-version-reality|vmess-ws-tls(tunnel)|hysteria2|tuic5
+# 老王sing-box七合一安装脚本AI修改版
+# vless-version-reality|vmess-ws-tls(tunnel)|vless-ws-tls(tunnel)|trojan-ws-tls(tunnel)|hysteria2|tuic5|socks5
 # 最后更新时间: 2025.11.17
 # =========================
 
@@ -937,7 +937,7 @@ create_shortcut() {
   cat > "$work_dir/sb.sh" << EOF
 #!/usr/bin/env bash
 
-bash <(curl -Ls https://raw.githubusercontent.com/zx7898/sing-box/refs/heads/main/box.sh) \$1
+bash <(curl -Ls https://raw.githubusercontent.com/zx7898/sing-box/refs/heads/main/sing.sh) \$1
 EOF
   chmod +x "$work_dir/sb.sh"
   ln -sf "$work_dir/sb.sh" /usr/bin/sb
@@ -1547,20 +1547,50 @@ ArgoDomain=$get_argodomain
 
 # 更新Argo域名到订阅
 change_argo_domain() {
-content=$(cat "$client_dir")
-vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-vmess_prefix="vmess://"
-encoded_vmess="${vmess_url#"$vmess_prefix"}"
-decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
-updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
-encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
-new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-echo "$new_content" > "$client_dir"
-base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "vmess节点已更新,更新订阅或手动复制以下vmess-argo节点\n"
-purple "$new_vmess_url\n" 
+    client_dir="${work_dir}/url.txt"
+    if [ ! -f "$client_dir" ]; then
+        red "找不到 ${client_dir} 文件，无法更新 Argo 域名！"
+        return
+    fi
+
+    # 提取原始内容
+    content=$(cat "$client_dir")
+
+    # 提取 VMESS 链接 (假设它是第一个/唯一一个VMESS)
+    vmess_url=$(echo "$content" | grep -oE 'vmess://[^#]*' | head -n 1)
+
+    # 1. VMESS 节点更新逻辑
+    if [ -n "$vmess_url" ]; then
+        # Base64 解码 VMESS 链接部分
+        encoded_part=$(echo "$vmess_url" | sed 's/vmess:\/\///')
+        json_part=$(echo "$encoded_part" | base64 -d 2>/dev/null)
+        
+        if [ $? -eq 0 ]; then
+            # 使用 jq 更新 host 和 sni
+            updated_json=$(echo "$json_part" | jq --arg domain "$ArgoDomain" '.host=$domain | .sni=$domain')
+
+            # Base64 重新编码并替换 VMESS 节点
+            new_encoded_part=$(echo "$updated_json" | base64 -w0)
+            new_vmess_url="vmess://$new_encoded_part"
+            content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+        else
+             yellow "VMESS 链接 Base64 解码失败或未找到。继续尝试更新 VLESS/Trojan..."
+        fi
+    fi
+
+    # 2. VLESS-WS 和 TROJAN-WS 修复逻辑：(添加了 /g 以替换所有匹配项)
+    # 更新 VLESS-WS 节点的 host 和 sni
+    content=$(echo "$content" | sed "s/\(vless:\/\/[^@]*@[^?]*?path=[^&]*&security=tls&host=\)[^&]*\(&fp=firefox&type=ws&sni=\)[^#]*/\1$ArgoDomain\2$ArgoDomain/g")
+    
+    # 更新 TROJAN-WS 节点的 host 和 sni
+    content=$(echo "$content" | sed "s/\(trojan:\/\/[^@]*@[^?]*?path=[^&]*&security=tls&host=\)[^&]*\(&fp=firefox&type=ws&sni=\)[^#]*/\1$ArgoDomain\2$ArgoDomain/g")
+
+    # 3. 写入文件并更新订阅
+    echo "$content" > "$client_dir"
+    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
+    green "\nArgo域名已更新到订阅,请更新订阅或手动更改vmess-argo/vless-argo/trojan-argo节点"
 }
+
 
 # 查看节点信息和订阅链接
 check_nodes() {
