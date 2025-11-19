@@ -338,7 +338,7 @@ cat > "${config_dir}" << EOF
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8003,
+      "listen_port": 8004,
       "users": [
         {
           "password": "$uuid"
