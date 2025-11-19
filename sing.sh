@@ -314,7 +314,8 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/vmess-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
+        "early_data_header_name": "Sec-WebSocket-Protocol",
+		"max_early_data": 2560
       }
     },
     {
@@ -331,7 +332,8 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/vless-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
+        "early_data_header_name": "Sec-WebSocket-Protocol",
+		"max_early_data": 2560
       }
     },
     {
@@ -347,7 +349,8 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/trojan-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
+        "early_data_header_name": "Sec-WebSocket-Protocol",
+		"max_early_data": 2560
       }
     },
     {
