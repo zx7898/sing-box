@@ -152,8 +152,6 @@ allow_port() {
     has_iptables=0
     has_ip6tables=0
     
-    allow_port 8001/tcp 8002/tcp 8003/tcp 8004/tcp > /dev/null 2>&1
-    
     command_exists ufw && has_ufw=1
     command_exists firewall-cmd && systemctl is-active firewalld >/dev/null 2>&1 && has_firewalld=1
     command_exists iptables && has_iptables=1
