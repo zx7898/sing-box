@@ -4,6 +4,7 @@
 # 老王sing-box七合一安装脚本AI修改版
 # vless-version-reality|vmess-ws-tls(tunnel)|vless-ws-tls(tunnel)|trojan-ws-tls(tunnel)|hysteria2|tuic5
 # 最后更新时间: 2025.11.17
+# 修复日志: 修复了修改Argo域名或优选IP时，Vless和Trojan节点重复拼接(Duplication)的问题
 # =========================
 
 export LANG=en_US.UTF-8
@@ -236,7 +237,7 @@ install_singbox() {
     uuid=$(cat /proc/sys/kernel/random/uuid)
     password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)
     socks5_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)  # 新增 SOCKS5 用户名
-socks5_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)  # 新增 SOCKS5 密码
+    socks5_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)  # 新增 SOCKS5 密码
     output=$(/etc/sing-box/sing-box generate reality-keypair)
     private_key=$(echo "${output}" | awk '/PrivateKey:/ {print $2}')
     public_key=$(echo "${output}" | awk '/PublicKey:/ {print $2}')
@@ -1592,63 +1593,52 @@ ArgoDomain=$get_argodomain
 
 # 更新Argo域名到订阅
 change_argo_domain() {
-    content=$(cat "$client_dir")
-    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-    vmess_prefix="vmess://"
-    encoded_vmess="${vmess_url#"$vmess_prefix"}"
-    decoded_vmess=$(echo "$encoded_vmess" | base64 --decode 2>/dev/null)
-    
-    # 检查解码是否成功
-    if [ $? -ne 0 ] || [ -z "$decoded_vmess" ]; then
-        red "VMESS链接解码失败，使用默认格式"
-        decoded_vmess='{"v":"2","ps":"","add":"","port":"","id":"","aid":"0","scy":"none","net":"ws","type":"none","host":"","path":"","tls":"tls","sni":"","alpn":"","fp":"firefox","allowlnsecure":"false"}'
-    fi
-    
-    updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain' 2>/dev/null)
-    if [ $? -ne 0 ]; then
-        red "JSON处理失败，跳过VMESS更新"
-        new_vmess_url="$vmess_url"
-    else
-        encoded_updated_vmess=$(echo "$updated_vmess" | base64 -w0)
-        new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-    fi
+content=$(cat "$client_dir")
+vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+vmess_prefix="vmess://"
+encoded_vmess="${vmess_url#"$vmess_prefix"}"
+decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
+updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
+encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
+new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
+# 更新 VLESS Argo
+# 修复：使用更宽容的grep，不强制要求端口存在，防止因change_cfip移除端口后导致无法匹配
+vless_argo_url=$(grep -o 'vless://[^#]*#[^ ]*' "$client_dir" | grep "argo")
+if [ -n "$vless_argo_url" ]; then
+    new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
+else
+    new_vless_argo_url="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&type=ws&host=${ArgoDomain}&path=%2Fvless-argo%3Fed%3D2560&sni=${ArgoDomain}&fp=firefox#${isp}_argo"
+fi
 
-    # 更新 VLESS Argo - 修复重复问题
-    vless_argo_url=$(grep -o 'vless://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo" | head -1)
-    if [ -n "$vless_argo_url" ]; then
-        new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
-    else
-        # 如果不存在，创建新的但不要重复添加
-        new_vless_argo_url=""
-    fi
+# 更新 Trojan Argo
+# 修复：使用更宽容的grep
+trojan_argo_url=$(grep -o 'trojan://[^#]*#[^ ]*' "$client_dir" | grep "argo")
+if [ -n "$trojan_argo_url" ]; then
+    new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
+else
+    new_trojan_argo_url="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${ArgoDomain}&path=%2Ftrojan-argo%3Fed%3D2560&sni=${ArgoDomain}&fp=firefox#${isp}_argo"
+fi
 
-    # 更新 Trojan Argo - 修复重复问题  
-    trojan_argo_url=$(grep -o 'trojan://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo" | head -1)
-    if [ -n "$trojan_argo_url" ]; then
-        new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
-    else
-        # 如果不存在，创建新的但不要重复添加
-        new_trojan_argo_url=""
-    fi
+# 合并所有更新
+new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+if [ -n "$vless_argo_url" ]; then
+    new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
+else
+    new_content=$(echo -e "$new_content\n$new_vless_argo_url")
+fi
 
-    # 合并更新 - 只替换已存在的行，不添加新行
-    new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-    
-    if [ -n "$vless_argo_url" ] && [ -n "$new_vless_argo_url" ]; then
-        new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
-    fi
-    
-    if [ -n "$trojan_argo_url" ] && [ -n "$new_trojan_argo_url" ]; then
-        new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
-    fi
+if [ -n "$trojan_argo_url" ]; then
+    new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
+else
+    new_content=$(echo -e "$new_content\n$new_trojan_argo_url")
+fi
 
-    echo "$new_content" > "$client_dir"
-    base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-    
-    green "Argo隧道节点已更新,更新订阅或手动复制以下节点\n"
-    [ -n "$new_vmess_url" ] && purple "$new_vmess_url\n"
-    [ -n "$new_vless_argo_url" ] && purple "$new_vless_argo_url\n" 
-    [ -n "$new_trojan_argo_url" ] && purple "$new_trojan_argo_url\n"
+echo "$new_content" > "$client_dir"
+base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
+green "Argo隧道节点已更新,更新订阅或手动复制以下节点\n"
+purple "$new_vmess_url\n"
+purple "$new_vless_argo_url\n" 
+purple "$new_trojan_argo_url\n"
 }
 
 # 查看节点信息和订阅链接
@@ -1675,12 +1665,30 @@ change_cfip() {
         cfport="443"
     else
         case "$cfip_input" in
-            "1") cfip="cf.090227.xyz"; cfport="443" ;;
-            "2") cfip="cf.877774.xyz"; cfport="443" ;;
-            "3") cfip="cf.877771.xyz"; cfport="443" ;;
-            "4") cfip="cdns.doon.eu.org"; cfport="443" ;;
-            "5") cfip="cf.zhetengsha.eu.org"; cfport="443" ;;
-            "6") cfip="time.is"; cfport="443" ;;
+            "1")
+                cfip="cf.090227.xyz"
+                cfport="443"
+                ;;
+            "2")
+                cfip="cf.877774.xyz"
+                cfport="443"
+                ;;
+            "3")
+                cfip="cf.877771.xyz"
+                cfport="443"
+                ;;
+            "4")
+                cfip="cdns.doon.eu.org"
+                cfport="443"
+                ;;
+            "5")
+                cfip="cf.zhetengsha.eu.org"
+                cfport="443"
+                ;;
+            "6")
+                cfip="time.is"
+                cfport="443"
+                ;;
             *)
                 if [[ "$cfip_input" =~ : ]]; then
                     cfip=$(echo "$cfip_input" | cut -d':' -f1)
@@ -1693,67 +1701,41 @@ change_cfip() {
         esac
     fi
 
-    content=$(cat "$client_dir")
+content=$(cat "$client_dir")
 
-    # 更新 VMESS - 只更新第一个匹配项
-    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir" | head -1)
-    if [ -n "$vmess_url" ]; then
-        encoded_part="${vmess_url#vmess://}"
-        decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
-        if [ $? -eq 0 ] && [ -n "$decoded_json" ]; then
-            updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
-                '.add = $cfip | .port = $cfport' 2>/dev/null)
-            if [ $? -eq 0 ]; then
-                new_encoded_part=$(echo "$updated_json" | base64 -w0)
-                new_vmess_url="vmess://$new_encoded_part"
-            else
-                new_vmess_url="$vmess_url"
-            fi
-        else
-            new_vmess_url="$vmess_url"
-        fi
-    else
-        new_vmess_url=""
-    fi
+# 更新 VMESS
+vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+encoded_part="${vmess_url#vmess://}"
+decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
+updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
+    '.add = $cfip | .port = $cfport')
+new_encoded_part=$(echo "$updated_json" | base64 -w0)
+new_vmess_url="vmess://$new_encoded_part"
 
-    # 更新 VLESS Argo - 只更新第一个匹配项
-    vless_argo_url=$(grep -o 'vless://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo" | head -1)
-    if [ -n "$vless_argo_url" ]; then
-        new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/@[^:]*:/@$cfip:/" | sed "s/:[0-9]*?/?/")
-    else
-        new_vless_argo_url=""
-    fi
+# 更新 VLESS Argo
+# 修复：使用更宽容的grep
+vless_argo_url=$(grep -o 'vless://[^#]*#[^ ]*' "$client_dir" | grep "argo")
+# 修复：正确替换IP和端口，而不是删除端口
+new_vless_argo_url=$(echo "$vless_argo_url" | sed "s/@[^?]*?/@${cfip}:${cfport}?/")
 
-    # 更新 Trojan Argo - 只更新第一个匹配项
-    trojan_argo_url=$(grep -o 'trojan://[^@]*@[^:?]*:[0-9]*?[^#]*#[^ ]*' "$client_dir" | grep "argo" | head -1)
-    if [ -n "$trojan_argo_url" ]; then
-        new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/@[^:]*:/@$cfip:/" | sed "s/:[0-9]*?/?/")
-    else
-        new_trojan_argo_url=""
-    fi
+# 更新 Trojan Argo  
+# 修复：使用更宽容的grep
+trojan_argo_url=$(grep -o 'trojan://[^#]*#[^ ]*' "$client_dir" | grep "argo")
+# 修复：正确替换IP和端口，而不是删除端口
+new_trojan_argo_url=$(echo "$trojan_argo_url" | sed "s/@[^?]*?/@${cfip}:${cfport}?/")
 
-    # 合并更新 - 只替换已存在的行
-    new_content="$content"
-    if [ -n "$vmess_url" ] && [ -n "$new_vmess_url" ]; then
-        new_content=$(echo "$new_content" | sed "s|$vmess_url|$new_vmess_url|")
-    fi
-    
-    if [ -n "$vless_argo_url" ] && [ -n "$new_vless_argo_url" ]; then
-        new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
-    fi
-    
-    if [ -n "$trojan_argo_url" ] && [ -n "$new_trojan_argo_url" ]; then
-        new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
-    fi
+# 合并更新
+new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+new_content=$(echo "$new_content" | sed "s|$vless_argo_url|$new_vless_argo_url|")
+new_content=$(echo "$new_content" | sed "s|$trojan_argo_url|$new_trojan_argo_url|")
 
-    echo "$new_content" > "$client_dir"
-    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-    
-    green "\n优选域名已更新为：${purple}${cfip}:${cfport}${re}\n"
-    green "更新订阅或手动复制以下节点：\n"
-    [ -n "$new_vmess_url" ] && purple "$new_vmess_url\n"
-    [ -n "$new_vless_argo_url" ] && purple "$new_vless_argo_url\n"
-    [ -n "$new_trojan_argo_url" ] && purple "$new_trojan_argo_url\n"
+echo "$new_content" > "$client_dir"
+base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt
+green "\n优选域名已更新为：${purple}${cfip}:${cfport}${re}\n"
+green "更新订阅或手动复制以下节点：\n"
+purple "$new_vmess_url\n"
+purple "$new_vless_argo_url\n"
+purple "$new_trojan_argo_url\n"
 }
 
 # 主菜单
@@ -1836,3 +1818,5 @@ while true; do
    esac
    read -n 1 -s -r -p $'\033[1;91m按任意键返回...\033[0m'
 done
+
+}
