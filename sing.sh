@@ -561,21 +561,19 @@ get_info() {
 
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-# 新增 VLESS-WS-TLS URL 构造
-  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${argodomain}&path=/vless-argo&sni=${argodomain}#${isp}_vless-ws"
+  VLESS="{ \"v\": \"2\", \"ps\": \"${isp}_vless-ws\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vless-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\", \"flow\": \"\", \"type\": \"vless\"}"
 
-  # 优化 TROJAN-WS-TLS 链接格式 (更兼容 V2rayN/v2rayng)
-  # 移除了 headerType=none 参数
-  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${argodomain}&path=/trojan-argo&sni=${argodomain}#${isp}_trojan-ws"
+  # Trojan 配置 (按照 VMESS 格式)
+  TROJAN="{ \"v\": \"2\", \"ps\": \"${isp}_trojan-ws\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/trojan-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\", \"password\": \"${uuid}\", \"type\": \"trojan\"}"
 
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-${VLESS_WS}  # <-- 写入新的 VLESS 链接
+vless://$(echo "$VLESS" | base64 -w0)
 
-${TROJAN_WS} # <-- 写入新的 TROJAN 链接
+trojan://$(echo "$TROJAN" | base64 -w0)
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -658,6 +656,9 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "Upgrade";
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     # 路径分流到 VLESS (8002)
@@ -668,6 +669,9 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "Upgrade";
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     # 路径分流到 TROJAN (8003)
@@ -678,6 +682,9 @@ server {
         proxy_set_header Upgrade \$http_upgrade;
         proxy_set_header Connection "Upgrade";
         proxy_set_header Host \$host;
+        proxy_set_header X-Real-IP \$remote_addr;
+        proxy_set_header X-Forwarded-For \$proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto \$scheme;
     }
 
     # 如果您的订阅链接也通过 Argo 转发，请确保添加其 location 块
