@@ -151,7 +151,9 @@ allow_port() {
     has_firewalld=0
     has_iptables=0
     has_ip6tables=0
-
+    
+    allow_port 8001/tcp 8002/tcp 8003/tcp 8004/tcp > /dev/null 2>&1
+    
     command_exists ufw && has_ufw=1
     command_exists firewall-cmd && systemctl is-active firewalld >/dev/null 2>&1 && has_firewalld=1
     command_exists iptables && has_iptables=1
@@ -305,7 +307,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8002,
       "users": [
         {
           "uuid": "$uuid"
@@ -314,15 +316,14 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/vmess-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol",
-		"max_early_data": 2048
+        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
     {
       "type": "vless",
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8003,
       "users": [
         {
           "uuid": "$uuid",
@@ -332,15 +333,14 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/vless-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol",
-		"max_early_data": 2048
+        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
     {
       "type": "trojan",
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8003,
       "users": [
         {
           "password": "$uuid"
@@ -349,8 +349,7 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/trojan-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol",
-		"max_early_data": 2048
+        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
     {
@@ -565,9 +564,9 @@ get_info() {
 
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo#${isp}"
+  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}"
 
-  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo#${isp}"
+  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}"
 
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
@@ -647,6 +646,45 @@ server {
         deny all;
         access_log off;
         log_not_found off;
+    }
+}
+
+server {
+    listen 8001;
+    listen [::]:8001;
+    server_name _;
+    
+    # VMESS 分流
+    location /vmess-argo {
+        proxy_pass http://127.0.0.1:8002;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    
+    # VLESS 分流  
+    location /vless-argo {
+        proxy_pass http://127.0.0.1:8003;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade"; 
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+    
+    # Trojan 分流
+    location /trojan-argo {
+        proxy_pass http://127.0.0.1:8004;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr; 
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 EOF
