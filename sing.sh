@@ -305,7 +305,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8002,
       "users": [
         {
           "uuid": "$uuid"
@@ -321,7 +321,7 @@ cat > "${config_dir}" << EOF
       "type": "vless", # <-- 新增 VLESS 入站
       "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8003,
       "users": [
         {
           "uuid": "$uuid"
@@ -337,7 +337,7 @@ cat > "${config_dir}" << EOF
       "type": "trojan", # <-- 新增 TROJAN 入站
       "tag": "trojan-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8004,
       "users": [
         {
           "password": "$uuid" # Trojan 使用 password 字段，这里使用 UUID
@@ -562,10 +562,11 @@ get_info() {
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
 # 新增 VLESS-WS-TLS URL 构造
-  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&host=${argodomain}&path=/vless-argo&headerType=none&type=ws&sni=${argodomain}#${isp}_vless-ws"
+  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${argodomain}&path=/vless-argo&sni=${argodomain}#${isp}_vless-ws"
 
-  # 新增 TROJAN-WS-TLS URL 构造
-  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&host=${argodomain}&path=/trojan-argo&headerType=none&type=ws&sni=${argodomain}#${isp}_trojan-ws"
+  # 优化 TROJAN-WS-TLS 链接格式 (更兼容 V2rayN/v2rayng)
+  # 移除了 headerType=none 参数
+  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&type=ws&host=${argodomain}&path=/trojan-argo&sni=${argodomain}#${isp}_trojan-ws"
 
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
@@ -646,6 +647,44 @@ server {
         access_log off;
         log_not_found off;
     }
+    listen 8001; # 监听 Argo 隧道转发来的流量
+    server_name ${argodomain};
+
+    # 路径分流到 VMESS (8001)
+    location /vmess-argo {
+        proxy_redirect off;
+        proxy_pass http://127.0.0.1:8002; 
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # 路径分流到 VLESS (8002)
+    location /vless-argo {
+        proxy_redirect off;
+        proxy_pass http://127.0.0.1:8003; 
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # 路径分流到 TROJAN (8003)
+    location /trojan-argo {
+        proxy_redirect off;
+        proxy_pass http://127.0.0.1:8004; 
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade \$http_upgrade;
+        proxy_set_header Connection "Upgrade";
+        proxy_set_header Host \$host;
+    }
+
+    # 如果您的订阅链接也通过 Argo 转发，请确保添加其 location 块
+    # 例如：
+    # location /sub {
+    #     proxy_pass http://127.0.0.1:8000; # 假设订阅服务在 8000 端口
+    # }
 }
 EOF
 
