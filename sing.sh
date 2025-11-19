@@ -1560,20 +1560,52 @@ ArgoDomain=$get_argodomain
 
 # 更新Argo域名到订阅
 change_argo_domain() {
-content=$(cat "$client_dir")
-vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-vmess_prefix="vmess://"
-encoded_vmess="${vmess_url#"$vmess_prefix"}"
-decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
-updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
-encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
-new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-echo "$new_content" > "$client_dir"
-base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "vmess节点已更新,更新订阅或手动复制以下vmess-argo节点\n"
-purple "$new_vmess_url\n" 
+    # 1. 更新 VMess 节点 (JSON Base64 编码)
+    # 读取文件内容
+    content=$(cat "$client_dir")
+    # 提取 vmess 链接
+    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+    
+    if [ -n "$vmess_url" ]; then
+        vmess_prefix="vmess://"
+        encoded_vmess="${vmess_url#"$vmess_prefix"}"
+        # 解码并更新 host 和 sni
+        decoded_vmess=$(echo "$encoded_vmess" | base64 --decode 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
+            # 重新编码
+            encoded_updated_vmess=$(echo "$updated_vmess" | base64 -w0)
+            new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
+            # 替换文件中的旧链接
+            sed -i "s|$vmess_url|$new_vmess_url|g" "$client_dir"
+        fi
+    fi
+
+    # 2. 更新 VLESS 节点 (URL 参数)
+    # 仅匹配包含 'vless-argo' 路径的行，避免修改 Reality 节点
+    if grep -q "path=%2Fvless-argo" "$client_dir"; then
+        # 更新 sni
+        sed -i "/path=%2Fvless-argo/s/sni=[^&]*/sni=${ArgoDomain}/" "$client_dir"
+        # 更新 host
+        sed -i "/path=%2Fvless-argo/s/host=[^&]*/host=${ArgoDomain}/" "$client_dir"
+    fi
+
+    # 3. 更新 Trojan 节点 (URL 参数)
+    # 仅匹配包含 'trojan-argo' 路径的行
+    if grep -q "path=%2Ftrojan-argo" "$client_dir"; then
+        # 更新 sni
+        sed -i "/path=%2Ftrojan-argo/s/sni=[^&]*/sni=${ArgoDomain}/" "$client_dir"
+        # 更新 host
+        sed -i "/path=%2Ftrojan-argo/s/host=[^&]*/host=${ArgoDomain}/" "$client_dir"
+    fi
+
+    # 4. 重新生成 Base64 订阅文件
+    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
+    
+    green "Argo域名已更新: ${purple}${ArgoDomain}${re}"
+    green "所有 Argo 节点 (VMess, VLESS, Trojan) 已同步更新。\n"
 }
+
 
 # 查看节点信息和订阅链接
 check_nodes() {
@@ -1590,39 +1622,21 @@ check_nodes() {
 
 change_cfip() {
     clear
-    yellow "修改vmess-argo优选域名\n"
+    yellow "修改 Argo 节点优选域名/IP (同时应用到 VMess, VLESS, Trojan)\n"
     green "1: cf.090227.xyz  2: cf.877774.xyz  3: cf.877771.xyz  4: cdns.doon.eu.org  5: cf.zhetengsha.eu.org  6: time.is\n"
-    reading "请输入你的优选域名或优选IP\n(请输入1至6选项,可输入域名:端口 或 IP:端口,直接回车默认使用1): " cfip_input
+    reading "请输入你的优选域名或优选IP (直接回车默认使用1): " cfip_input
 
     if [ -z "$cfip_input" ]; then
         cfip="cf.090227.xyz"
         cfport="443"
     else
         case "$cfip_input" in
-            "1")
-                cfip="cf.090227.xyz"
-                cfport="443"
-                ;;
-            "2")
-                cfip="cf.877774.xyz"
-                cfport="443"
-                ;;
-            "3")
-                cfip="cf.877771.xyz"
-                cfport="443"
-                ;;
-            "4")
-                cfip="cdns.doon.eu.org"
-                cfport="443"
-                ;;
-            "5")
-                cfip="cf.zhetengsha.eu.org"
-                cfport="443"
-                ;;
-            "6")
-                cfip="time.is"
-                cfport="443"
-                ;;
+            "1") cfip="cf.090227.xyz"; cfport="443" ;;
+            "2") cfip="cf.877774.xyz"; cfport="443" ;;
+            "3") cfip="cf.877771.xyz"; cfport="443" ;;
+            "4") cfip="cdns.doon.eu.org"; cfport="443" ;;
+            "5") cfip="cf.zhetengsha.eu.org"; cfport="443" ;;
+            "6") cfip="time.is"; cfport="443" ;;
             *)
                 if [[ "$cfip_input" =~ : ]]; then
                     cfip=$(echo "$cfip_input" | cut -d':' -f1)
@@ -1635,20 +1649,35 @@ change_cfip() {
         esac
     fi
 
-content=$(cat "$client_dir")
-vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-encoded_part="${vmess_url#vmess://}"
-decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
-updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
-    '.add = $cfip | .port = $cfport')
-new_encoded_part=$(echo "$updated_json" | base64 -w0)
-new_vmess_url="vmess://$new_encoded_part"
-new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-echo "$new_content" > "$client_dir"
-base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-green "\nvmess节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下vmess-argo节点${re}\n"
-purple "$new_vmess_url\n"
+    # 1. 更新 VMess
+    content=$(cat "$client_dir")
+    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+    if [ -n "$vmess_url" ]; then
+        encoded_part="${vmess_url#vmess://}"
+        decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
+        if [ $? -eq 0 ]; then
+            updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" '.add = $cfip | .port = $cfport')
+            new_encoded_part=$(echo "$updated_json" | base64 -w0)
+            new_vmess_url="vmess://$new_encoded_part"
+            sed -i "s|$vmess_url|$new_vmess_url|g" "$client_dir"
+        fi
+    fi
+
+    # 2. 更新 VLESS (Argo)
+    # 替换 @后面的IP地址:端口
+    sed -i "/path=%2Fvless-argo/s/@.*:.*[?]/@${cfip}:${cfport}?/" "$client_dir"
+
+    # 3. 更新 Trojan (Argo)
+    # 替换 @后面的IP地址:端口
+    sed -i "/path=%2Ftrojan-argo/s/@.*:.*[?]/@${cfip}:${cfport}?/" "$client_dir"
+
+    # 更新订阅文件
+    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
+    
+    green "\nArgo 节点优选 IP 已更新为：${purple}${cfip}:${cfport}${re}"
+    green "请更新订阅。\n"
 }
+
 
 # 主菜单
 menu() {
