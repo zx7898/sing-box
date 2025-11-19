@@ -561,19 +561,14 @@ get_info() {
 
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-  VLESS="{ \"v\": \"2\", \"ps\": \"${isp}_vless-ws\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vless-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\", \"flow\": \"\", \"type\": \"vless\"}"
-
-  # Trojan 配置 (按照 VMESS 格式)
-  TROJAN="{ \"v\": \"2\", \"ps\": \"${isp}_trojan-ws\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/trojan-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\", \"password\": \"${uuid}\", \"type\": \"trojan\"}"
-
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-vless://$(echo "$VLESS" | base64 -w0)
+vless://${uuid}@${CFIP}:${CFPORT}?path=%2Fvless-argo%3Fed%3D2560&security=tls&host=${argodomain}&fp=firefox&type=ws&sni=${argodomain}#${isp}_vless-ws
 
-trojan://$(echo "$TROJAN" | base64 -w0)
+trojan://${uuid}@${CFIP}:${CFPORT}?path=%2Ftrojan-argo%3Fed%3D2560&security=tls&host=${argodomain}&fp=firefox&type=ws&sni=${argodomain}#${isp}_trojan-ws
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
