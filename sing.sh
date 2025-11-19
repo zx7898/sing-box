@@ -315,7 +315,7 @@ cat > "${config_dir}" << EOF
         "type": "ws",
         "path": "/vmess-argo",
         "early_data_header_name": "Sec-WebSocket-Protocol",
-		"max_early_data": 2560
+		"max_early_data": 2048
       }
     },
     {
@@ -333,7 +333,7 @@ cat > "${config_dir}" << EOF
         "type": "ws",
         "path": "/vless-argo",
         "early_data_header_name": "Sec-WebSocket-Protocol",
-		"max_early_data": 2560
+		"max_early_data": 2048
       }
     },
     {
@@ -350,7 +350,7 @@ cat > "${config_dir}" << EOF
         "type": "ws",
         "path": "/trojan-argo",
         "early_data_header_name": "Sec-WebSocket-Protocol",
-		"max_early_data": 2560
+		"max_early_data": 2048
       }
     },
     {
@@ -565,9 +565,9 @@ get_info() {
 
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}"
+  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo#${isp}"
 
-  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}"
+  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo#${isp}"
 
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
