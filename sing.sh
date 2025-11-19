@@ -317,11 +317,11 @@ cat > "${config_dir}" << EOF
         "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
-        {
-      "type": "vless",
-      "tag": "vless-ws-tunnel",
+    {
+      "type": "vless", # <-- 新增 VLESS 入站
+      "tag": "vless-ws",
       "listen": "::",
-      "listen_port": 8001, // **使用与 VMess 相同的端口，通过 path 区分**
+      "listen_port": 8001,
       "users": [
         {
           "uuid": "$uuid"
@@ -329,7 +329,24 @@ cat > "${config_dir}" << EOF
       ],
       "transport": {
         "type": "ws",
-        "path": "/vless-argo" // VLESS 使用不同的 path
+        "path": "/vless-argo", # VLESS 路径
+        "early_data_header_name": "Sec-WebSocket-Protocol"
+      }
+    },
+    {
+      "type": "trojan", # <-- 新增 TROJAN 入站
+      "tag": "trojan-ws",
+      "listen": "::",
+      "listen_port": 8001,
+      "users": [
+        {
+          "password": "$uuid" # Trojan 使用 password 字段，这里使用 UUID
+        }
+      ],
+      "transport": {
+        "type": "ws",
+        "path": "/trojan-argo", # Trojan 路径
+        "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
     {
@@ -544,14 +561,20 @@ get_info() {
 
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-VLESS_WS="{ \"v\": \"0\", \"ps\": \"${isp}_VLESS_WS\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vless-argo\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
+# 新增 VLESS-WS-TLS URL 构造
+  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&host=${argodomain}&path=/vless-argo&headerType=none&type=ws&sni=${argodomain}#${isp}_vless-ws"
+
+  # 新增 TROJAN-WS-TLS URL 构造
+  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&host=${argodomain}&path=/trojan-argo&headerType=none&type=ws&sni=${argodomain}#${isp}_trojan-ws"
 
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-vless://$(echo "$VLESS_WS" | base64 -w0) # 新增 VLESS-WS 链接
+${VLESS_WS}  # <-- 写入新的 VLESS 链接
+
+${TROJAN_WS} # <-- 写入新的 TROJAN 链接
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
