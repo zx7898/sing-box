@@ -151,7 +151,7 @@ allow_port() {
     has_firewalld=0
     has_iptables=0
     has_ip6tables=0
-    
+
     command_exists ufw && has_ufw=1
     command_exists firewall-cmd && systemctl is-active firewalld >/dev/null 2>&1 && has_firewalld=1
     command_exists iptables && has_iptables=1
@@ -305,7 +305,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": 8002,
+      "listen_port": 8001,
       "users": [
         {
           "uuid": "$uuid"
@@ -317,37 +317,19 @@ cat > "${config_dir}" << EOF
         "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
-    {
+        {
       "type": "vless",
-      "tag": "vless-ws",
+      "tag": "vless-ws-tunnel",
       "listen": "::",
-      "listen_port": 8003,
+      "listen_port": 8001, // **使用与 VMess 相同的端口，通过 path 区分**
       "users": [
         {
-          "uuid": "$uuid",
-          "flow": ""
+          "uuid": "$uuid"
         }
       ],
       "transport": {
         "type": "ws",
-        "path": "/vless-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
-      }
-    },
-    {
-      "type": "trojan",
-      "tag": "trojan-ws",
-      "listen": "::",
-      "listen_port": 8004,
-      "users": [
-        {
-          "password": "$uuid"
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/trojan-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
+        "path": "/vless-argo" // VLESS 使用不同的 path
       }
     },
     {
@@ -562,18 +544,14 @@ get_info() {
 
   VMESS="{ \"v\": \"2\", \"ps\": \"${isp}\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vmess-argo?ed=2560\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
-  VLESS_WS="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}"
-
-  TROJAN_WS="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argodomain}&fp=firefox&type=ws&host=${argodomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}"
+VLESS_WS="{ \"v\": \"0\", \"ps\": \"${isp}_VLESS_WS\", \"add\": \"${CFIP}\", \"port\": \"${CFPORT}\", \"id\": \"${uuid}\", \"aid\": \"0\", \"scy\": \"none\", \"net\": \"ws\", \"type\": \"none\", \"host\": \"${argodomain}\", \"path\": \"/vless-argo\", \"tls\": \"tls\", \"sni\": \"${argodomain}\", \"alpn\": \"\", \"fp\": \"firefox\", \"allowlnsecure\": \"flase\"}"
 
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-$VLESS_WS
-
-$TROJAN_WS
+vless://$(echo "$VLESS_WS" | base64 -w0) # 新增 VLESS-WS 链接
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -644,45 +622,6 @@ server {
         deny all;
         access_log off;
         log_not_found off;
-    }
-}
-
-server {
-    listen 8001;
-    listen [::]:8001;
-    server_name _;
-    
-    # VMESS 分流
-    location /vmess-argo {
-        proxy_pass http://127.0.0.1:8002;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-    
-    # VLESS 分流  
-    location /vless-argo {
-        proxy_pass http://127.0.0.1:8003;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade"; 
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-    
-    # Trojan 分流
-    location /trojan-argo {
-        proxy_pass http://127.0.0.1:8004;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr; 
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
     }
 }
 EOF
@@ -1545,9 +1484,6 @@ ArgoDomain=$get_argodomain
 # 更新Argo域名到订阅
 change_argo_domain() {
 content=$(cat "$client_dir")
-server_ip=$(get_realip)
-
-# 更新 VMess
 vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
 vmess_prefix="vmess://"
 encoded_vmess="${vmess_url#"$vmess_prefix"}"
@@ -1555,33 +1491,11 @@ decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
 updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
 encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
 new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-
-# 更新 VLESS
-vless_ws_url=$(grep -o 'vless://[^?]*@'"$CFIP"':'"$CFPORT"'[^ ]*' "$client_dir")
-if [ -n "$vless_ws_url" ]; then
-    new_vless_ws_url=$(echo "$vless_ws_url" | sed "s/host=[^&]*/host=$ArgoDomain/g" | sed "s/sni=[^&]*/sni=$ArgoDomain/g")
-else
-    new_vless_ws_url="vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${ArgoDomain}&fp=firefox&type=ws&host=${ArgoDomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}"
-fi
-
-# 更新 Trojan
-trojan_ws_url=$(grep -o 'trojan://[^?]*@'"$CFIP"':'"$CFPORT"'[^ ]*' "$client_dir")
-if [ -n "$trojan_ws_url" ]; then
-    new_trojan_ws_url=$(echo "$trojan_ws_url" | sed "s/host=[^&]*/host=$ArgoDomain/g" | sed "s/sni=[^&]*/sni=$ArgoDomain/g")
-else
-    new_trojan_ws_url="trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${ArgoDomain}&fp=firefox&type=ws&host=${ArgoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}"
-fi
-
-# 生成新的内容
-new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|" | sed "s|$vless_ws_url|$new_vless_ws_url|" | sed "s|$trojan_ws_url|$new_trojan_ws_url|")
-
+new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
 echo "$new_content" > "$client_dir"
 base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-
-green "所有隧道节点已更新,更新订阅或手动复制以下节点\n"
-purple "$new_vmess_url\n"
-purple "$new_vless_ws_url\n" 
-purple "$new_trojan_ws_url\n"
+green "vmess节点已更新,更新订阅或手动复制以下vmess-argo节点\n"
+purple "$new_vmess_url\n" 
 }
 
 # 查看节点信息和订阅链接
@@ -1644,50 +1558,19 @@ change_cfip() {
         esac
     fi
 
-    content=$(cat "$client_dir")
-    
-    # 获取当前 Argo 域名
-    current_argo_domain=$(grep -o 'host=[^&]*' "$client_dir" | head -1 | cut -d= -f2)
-    if [ -z "$current_argo_domain" ]; then
-        current_argo_domain=$(sed -n 's|.*https://\([^/]*trycloudflare\.com\).*|\1|p' "${work_dir}/argo.log" | head -1)
-    fi
-
-    # 更新 VMess
-    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-    encoded_part="${vmess_url#vmess://}"
-    decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
-    updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
-        '.add = $cfip | .port = $cfport')
-    new_encoded_part=$(echo "$updated_json" | base64 -w0)
-    new_vmess_url="vmess://$new_encoded_part"
-
-    # 更新 VLESS
-    vless_ws_url=$(grep -o 'vless://[^?]*@[^:?]*:[0-9]*[^ ]*' "$client_dir" | grep -v ":$vless_port" | head -1)
-    if [ -n "$vless_ws_url" ]; then
-        new_vless_ws_url=$(echo "$vless_ws_url" | sed "s/@[^:?]*:/@$cfip:/" | sed "s/:[0-9]*\?/:$cfport/")
-    else
-        new_vless_ws_url="vless://${uuid}@${cfip}:${cfport}?encryption=none&security=tls&sni=${current_argo_domain}&fp=firefox&type=ws&host=${current_argo_domain}&path=%2Fvless-argo%3Fed%3D2560#${isp}"
-    fi
-
-    # 更新 Trojan
-    trojan_ws_url=$(grep -o 'trojan://[^?]*@[^:?]*:[0-9]*[^ ]*' "$client_dir" | head -1)
-    if [ -n "$trojan_ws_url" ]; then
-        new_trojan_ws_url=$(echo "$trojan_ws_url" | sed "s/@[^:?]*:/@$cfip:/" | sed "s/:[0-9]*\?/:$cfport/")
-    else
-        new_trojan_ws_url="trojan://${uuid}@${cfip}:${cfport}?security=tls&sni=${current_argo_domain}&fp=firefox&type=ws&host=${current_argo_domain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}"
-    fi
-
-    # 生成新的内容
-    new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|" | sed "s|$vless_ws_url|$new_vless_ws_url|" | sed "s|$trojan_ws_url|$new_trojan_ws_url|")
-
-    echo "$new_content" > "$client_dir"
-    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-    
-    green "\n所有隧道节点优选域名已更新为：${purple}${cfip}:${cfport}${re}\n"
-    green "请更新订阅或手动复制以下节点：\n"
-    purple "$new_vmess_url\n"
-    purple "$new_vless_ws_url\n"
-    purple "$new_trojan_ws_url\n"
+content=$(cat "$client_dir")
+vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+encoded_part="${vmess_url#vmess://}"
+decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
+updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
+    '.add = $cfip | .port = $cfport')
+new_encoded_part=$(echo "$updated_json" | base64 -w0)
+new_vmess_url="vmess://$new_encoded_part"
+new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+echo "$new_content" > "$client_dir"
+base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
+green "\nvmess节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下vmess-argo节点${re}\n"
+purple "$new_vmess_url\n"
 }
 
 # 主菜单
