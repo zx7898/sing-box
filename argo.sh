@@ -1,9 +1,9 @@
 #!/bin/bash
 
 # =========================
-# 老王sing-box五合一安装脚本
+# 老王sing-box四合一安装脚本
 # vless-version-reality|vmess-ws-tls(tunnel)|hysteria2|tuic5
-# 最后更新时间: 2025.11.17
+# 最后更新时间: 2025.10.17
 # =========================
 
 export LANG=en_US.UTF-8
@@ -232,17 +232,14 @@ install_singbox() {
     nginx_port=$(($vless_port + 1)) 
     tuic_port=$(($vless_port + 2))
     hy2_port=$(($vless_port + 3)) 
-    socks5_port=$(($vless_port + 4))
     uuid=$(cat /proc/sys/kernel/random/uuid)
     password=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 24)
-    socks5_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)  # 新增 SOCKS5 用户名
-socks5_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)  # 新增 SOCKS5 密码
     output=$(/etc/sing-box/sing-box generate reality-keypair)
     private_key=$(echo "${output}" | awk '/PrivateKey:/ {print $2}')
     public_key=$(echo "${output}" | awk '/PublicKey:/ {print $2}')
 
     # 放行端口
-    allow_port $vless_port/tcp $nginx_port/tcp $tuic_port/udp $hy2_port/udp $socks5_port/tcp > /dev/null 2>&1
+    allow_port $vless_port/tcp $nginx_port/tcp $tuic_port/udp $hy2_port/udp > /dev/null 2>&1
 
     # 生成自签名证书
     openssl ecparam -genkey -name prime256v1 -out "${work_dir}/private.key"
@@ -305,7 +302,7 @@ cat > "${config_dir}" << EOF
       "type": "vmess",
       "tag": "vmess-ws",
       "listen": "::",
-      "listen_port": 8001,
+      "listen_port": 8003,
       "users": [
         {
           "uuid": "$uuid"
@@ -314,23 +311,6 @@ cat > "${config_dir}" << EOF
       "transport": {
         "type": "ws",
         "path": "/vmess-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
-      }
-    },
-    {
-      "type": "vless",
-      "tag": "vless-ws",
-      "listen": "::",
-      "listen_port": 8001,  // <-- 关键：端口设置为 8001
-      "users": [
-        {
-          "uuid": "$uuid",
-          "flow": ""
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/vless-argo", // <-- 关键：路径设置为 /vless-argo
         "early_data_header_name": "Sec-WebSocket-Protocol"
       }
     },
@@ -373,18 +353,6 @@ cat > "${config_dir}" << EOF
         "certificate_path": "$work_dir/cert.pem",
         "key_path": "$work_dir/private.key"
       }
-    },
-    {
-      "type": "socks",
-      "tag": "socks5-in",
-      "listen": "::",
-      "listen_port": $socks5_port,
-      "users": [
-        {
-          "username": "$socks5_user",
-          "password": "$socks5_pass"
-        }
-      ]
     }
   ],
   "outbounds": [
@@ -471,7 +439,7 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 TimeoutStartSec=0
-ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --edge-ip-version auto --config /etc/sing-box/tunnel.yml run > /etc/sing-box/argo.log 2>&1"
+ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1"
 Restart=on-failure
 RestartSec=5s
 
@@ -551,14 +519,9 @@ vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
-vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&type=ws&host=${argodomain}&path=/vless-argo?ed=2560&sni=${argodomain}&fp=firefox#${isp}_VLESS_WS_Argo
-
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
 tuic://${uuid}:${password}@${server_ip}:${tuic_port}?sni=www.bing.com&congestion_control=bbr&udp_relay_mode=native&alpn=h3&allow_insecure=1#${isp}
-
-socks5://${socks5_user}:${socks5_pass}@${server_ip}:${socks5_port}#${isp}_socks5
-
 EOF
 echo ""
 while IFS= read -r line; do echo -e "${purple}$line"; done < ${work_dir}/url.txt
@@ -873,7 +836,7 @@ create_shortcut() {
   cat > "$work_dir/sb.sh" << EOF
 #!/usr/bin/env bash
 
-bash <(curl -Ls https://raw.githubusercontent.com/zx7898/sing-box/refs/heads/main/box.sh) \$1
+bash <(curl -Ls https://raw.githubusercontent.com/eooce/sing-box/main/sing-box.sh) \$1
 EOF
   chmod +x "$work_dir/sb.sh"
   ln -sf "$work_dir/sb.sh" /usr/bin/sb
@@ -920,8 +883,6 @@ change_config() {
     skyblue "------------"
     green "6. 修改vmess-argo优选域名"
     skyblue "------------"
-    green "7. 修改SOCKS5配置"  # 新增选项
-    skyblue "------------"
     purple "0. 返回主菜单"
     skyblue "------------"
     reading "请输入选择: " choice
@@ -935,8 +896,6 @@ change_config() {
             green "3. 修改tuic端口"
             skyblue "------------"
             green "4. 修改vmess-argo端口"
-            skyblue "------------"
-            green "5. 修改SOCKS5端口"  # 新增
             skyblue "------------"
             purple "0. 返回上一级菜单"
             skyblue "------------"
@@ -1007,19 +966,8 @@ change_config() {
                     restart_singbox
                     green "\nvmess-argo端口已修改为：${purple}${new_port}${re}\n"
                     ;;                    
-                5)  
-                    reading "\n请输入SOCKS5端口 (回车跳过将使用随机端口): " new_port
-                    [ -z "$new_port" ] && new_port=$(shuf -i 2000-65000 -n 1)
-                    sed -i '/"type": "socks"/,/listen_port/ s/"listen_port": [0-9]\+/"listen_port": '"$new_port"'/' $config_dir
-                    restart_singbox
-                    allow_port $new_port/tcp > /dev/null 2>&1
-                    sed -i 's/\(socks5:\/\/[^@]*@[^:]*:\)[0-9]\{1,\}/\1'"$new_port"'/' $client_dir
-                    base64 -w0 /etc/sing-box/url.txt > /etc/sing-box/sub.txt
-                    while IFS= read -r line; do yellow "$line"; done < ${work_dir}/url.txt
-                    green "\nSOCKS5端口已修改为：${purple}$new_port${re} ${green}请更新订阅或手动更改SOCKS5端口${re}\n"
-                    ;;
                 0)  change_config ;;
-                *)  red "无效的选项，请输入 0 到 5" ;;
+                *)  red "无效的选项，请输入 1 到 4" ;;
             esac
             ;;
         2)
@@ -1143,74 +1091,8 @@ EOF
             green "\n端口跳跃已删除\n"
             ;;
         6)  change_cfip ;;
-        7)  
-            clear
-            echo ""
-            green "=== 修改SOCKS5配置 ===\n"
-            green "1. 修改SOCKS5端口"
-            skyblue "------------"
-            green "2. 修改SOCKS5用户名"
-            skyblue "------------"
-            green "3. 修改SOCKS5密码"
-            skyblue "------------"
-            green "4. 修改SOCKS5用户名和密码"
-            skyblue "------------"
-            purple "0. 返回上一级菜单"
-            skyblue "------------"
-            reading "请输入选择: " choice
-            case "${choice}" in
-                1)
-                    reading "\n请输入新的SOCKS5端口 (回车跳过将使用随机端口): " new_socks_port
-                    [ -z "$new_socks_port" ] && new_socks_port=$(shuf -i 2000-65000 -n 1)
-                    sed -i '/"type": "socks"/,/listen_port/ s/"listen_port": [0-9]\+/"listen_port": '"$new_socks_port"'/' $config_dir
-                    restart_singbox
-                    allow_port $new_socks_port/tcp > /dev/null 2>&1
-                    sed -i 's/\(socks5:\/\/[^@]*@[^:]*:\)[0-9]\{1,\}/\1'"$new_socks_port"'/' $client_dir
-                    base64 -w0 $client_dir > /etc/sing-box/sub.txt
-                    while IFS= read -r line; do yellow "$line"; done < ${work_dir}/url.txt
-                    green "\nSOCKS5端口已修改为：${purple}$new_socks_port${re}\n"
-                    ;;
-                2)
-                    reading "\n请输入新的SOCKS5用户名 (回车跳过将使用随机用户名): " new_socks_user
-                    [ -z "$new_socks_user" ] && new_socks_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)
-                    sed -i '/"type": "socks"/,/"users"/,/"username"/ s/"username": "[^"]*"/"username": "'"$new_socks_user"'"/' $config_dir
-                    restart_singbox
-                    sed -i 's|\(socks5://\)[^:]*\(:[^@]*@\)|\1'"$new_socks_user"'\2|' $client_dir
-                    base64 -w0 $client_dir > /etc/sing-box/sub.txt
-                    while IFS= read -r line; do yellow "$line"; done < ${work_dir}/url.txt
-                    green "\nSOCKS5用户名已修改为：${purple}$new_socks_user${re}\n"
-                    ;;
-                3)
-                    reading "\n请输入新的SOCKS5密码 (回车跳过将使用随机密码): " new_socks_pass
-                    [ -z "$new_socks_pass" ] && new_socks_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)
-                    sed -i '/"type": "socks"/,/"users"/,/"password"/ s/"password": "[^"]*"/"password": "'"$new_socks_pass"'"/' $config_dir
-                    restart_singbox
-                    sed -i 's|\(socks5://[^:]*:\)[^@]*\(@\)|\1'"$new_socks_pass"'\2|' $client_dir
-                    base64 -w0 $client_dir > /etc/sing-box/sub.txt
-                    while IFS= read -r line; do yellow "$line"; done < ${work_dir}/url.txt
-                    green "\nSOCKS5密码已修改为：${purple}$new_socks_pass${re}\n"
-                    ;;
-                4)
-                    reading "\n请输入新的SOCKS5用户名 (回车跳过将使用随机用户名): " new_socks_user
-                    [ -z "$new_socks_user" ] && new_socks_user=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 12)
-                    reading "\n请输入新的SOCKS5密码 (回车跳过将使用随机密码): " new_socks_pass
-                    [ -z "$new_socks_pass" ] && new_socks_pass=$(< /dev/urandom tr -dc 'A-Za-z0-9' | head -c 16)
-                    
-                    sed -i '/"type": "socks"/,/"users"/,/"username"/ s/"username": "[^"]*"/"username": "'"$new_socks_user"'"/' $config_dir
-                    sed -i '/"type": "socks"/,/"users"/,/"password"/ s/"password": "[^"]*"/"password": "'"$new_socks_pass"'"/' $config_dir
-                    restart_singbox
-                    sed -i 's|\(socks5://\)[^:]*:[^@]*\(@[^:]*:[0-9]*\)|\1'"$new_socks_user"':'"$new_socks_pass"'\2|' $client_dir
-                    base64 -w0 $client_dir > /etc/sing-box/sub.txt
-                    while IFS= read -r line; do yellow "$line"; done < ${work_dir}/url.txt
-                    green "\nSOCKS5用户名已修改为：${purple}$new_socks_user${re}"
-                    green "SOCKS5密码已修改为：${purple}$new_socks_pass${re}\n"
-                    ;;
-                0)  change_config ;;
-                *)  red "无效的选项！" ;;
-            esac
-            ;;
         0)  menu ;;
-        *)  red "无效的选项！" ;; 
+        *)  read "无效的选项！" ;; 
     esac
 }
 
@@ -1393,14 +1275,7 @@ protocol: http2
                                            
 ingress:
   - hostname: $ArgoDomain
-    service: http://localhost:8001
-    path: ^/vmess-argo(/.*)?\$
-    originRequest:
-      noTLSVerify: true
-
-  - hostname: $ArgoDomain
-    service: http://localhost:8001
-    path: ^/vless-argo(/.*)?\$
+    service: http://localhost:8003
     originRequest:
       noTLSVerify: true
   - service: http_status:404
@@ -1591,7 +1466,7 @@ menu() {
    green "Telegram群组: ${purple}https://t.me/eooceu${re}"
    green "YouTube频道: ${purple}https://youtube.com/@eooce${re}"
    green "Github地址: ${purple}https://github.com/eooce/sing-box${re}\n"
-   purple "=== 老王sing-box五合一安装脚本 ===\n"
+   purple "=== 老王sing-box四合一安装脚本 ===\n"
    purple "---Argo 状态: ${argo_status}"   
    purple "--Nginx 状态: ${nginx_status}"
    purple "singbox 状态: ${singbox_status}\n"
