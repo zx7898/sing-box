@@ -471,7 +471,7 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 TimeoutStartSec=0
-ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001  http://localhost:8002  http://localhost:8003 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1"
+ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1 & /etc/sing-box/argo tunnel --url http://localhost:8002 --no-autoupdate --edge-ip-version auto --protocol http2 >> /etc/sing-box/argo.log 2>&1 & /etc/sing-box/argo tunnel --url http://localhost:8003 --no-autoupdate --edge-ip-version auto --protocol http2 >> /etc/sing-box/argo.log 2>&1"
 Restart=on-failure
 RestartSec=5s
 
@@ -1380,17 +1380,14 @@ protocol: http2
 ingress:
   - hostname: $ArgoDomain
     service: http://localhost:8001
-    path:  /vmess-argo
     originRequest:
       noTLSVerify: true
   - hostname: $ArgoDomain
     service: http://localhost:8002
-    path:  /vless-argo
     originRequest:
       noTLSVerify: true
   - hostname: $ArgoDomain
     service: http://localhost:8003
-    path:  /trojan-argo
     originRequest:
       noTLSVerify: true
   - service: http_status:404
