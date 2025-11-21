@@ -549,9 +549,9 @@ get_info() {
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
-vless://${UUID}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}
+vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}
 
-trojan://${UUID}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}
+trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}
 
 vmess://$(echo "$VMESS" | base64 -w0)
 
@@ -1480,31 +1480,41 @@ ArgoDomain=$get_argodomain
 
 # 更新Argo域名到订阅
 change_argo_domain() {
-content=$(cat "$client_dir")
-vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-vmess_prefix="vmess://"
-encoded_vmess="${vmess_url#"$vmess_prefix"}"
-decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
-updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
-encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
-new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-
-    # 更新vless-ws
-old_vless_ws=$(grep -o 'vless://[^@]*@[^?]*?[^#]*#[^"]*' "$new_content2" | grep "vless-argo" | head -1)
-new_vless_ws=$(echo "$old_vless_ws" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
-new_content3=$(echo "$new_content2" | sed "s|$old_vless_ws|$new_vless_ws|")
+    content=$(cat "$client_dir")
     
-    # 更新trojan-ws
-old_trojan_ws=$(grep -o 'trojan://[^@]*@[^?]*?[^#]*#[^"]*' "$new_content3" | head -1)
-new_trojan_ws=$(echo "$old_trojan_ws" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
-final_content=$(echo "$new_content3" | sed "s|$old_trojan_ws|$new_trojan_ws|")
-echo "$new_content" > "$client_dir"
-base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-green "vmess/vless/trojan节点已更新,更新订阅或手动复制以下节点\n"
-purple "$new_vmess_url\n" 
-purple "$new_vless_ws\n"
-purple "$new_trojan_ws\n"
+    # 更新vmess节点
+    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+    vmess_prefix="vmess://"
+    encoded_vmess="${vmess_url#"$vmess_prefix"}"
+    decoded_vmess=$(echo "$encoded_vmess" | base64 --decode 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
+        encoded_updated_vmess=$(echo "$updated_vmess" | base64 -w0)
+        new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
+        content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+    fi
+    
+    # 更新vless-ws节点
+    old_vless_ws=$(grep -o 'vless://[^@]*@[^?]*?[^#]*#[^"]*' "$client_dir" | grep "vless-argo" | head -1)
+    if [ -n "$old_vless_ws" ]; then
+        new_vless_ws=$(echo "$old_vless_ws" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
+        content=$(echo "$content" | sed "s|$old_vless_ws|$new_vless_ws|")
+    fi
+    
+    # 更新trojan-ws节点
+    old_trojan_ws=$(grep -o 'trojan://[^@]*@[^?]*?[^#]*#[^"]*' "$client_dir" | head -1)
+    if [ -n "$old_trojan_ws" ]; then
+        new_trojan_ws=$(echo "$old_trojan_ws" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
+        content=$(echo "$content" | sed "s|$old_trojan_ws|$new_trojan_ws|")
+    fi
+    
+    echo "$content" > "$client_dir"
+    base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
+    
+    green "所有Argo节点已更新,更新订阅或手动复制以下节点\n"
+    [ -n "$new_vmess_url" ] && purple "$new_vmess_url\n"
+    [ -n "$new_vless_ws" ] && purple "$new_vless_ws\n"
+    [ -n "$new_trojan_ws" ] && purple "$new_trojan_ws\n"
 }
 
 # 查看节点信息和订阅链接
@@ -1522,7 +1532,7 @@ check_nodes() {
 
 change_cfip() {
     clear
-    yellow "修改vmess-argo优选域名\n"
+    yellow "修改vmess/vless/trojan优选域名\n"
     green "1: cf.090227.xyz  2: cf.877774.xyz  3: cf.877771.xyz  4: cdns.doon.eu.org  5: cf.zhetengsha.eu.org  6: time.is\n"
     reading "请输入你的优选域名或优选IP\n(请输入1至6选项,可输入域名:端口 或 IP:端口,直接回车默认使用1): " cfip_input
 
@@ -1567,32 +1577,41 @@ change_cfip() {
         esac
     fi
 
-content=$(cat "$client_dir")
-vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-encoded_part="${vmess_url#vmess://}"
-decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
-updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
-    '.add = $cfip | .port = $cfport')
-new_encoded_part=$(echo "$updated_json" | base64 -w0)
-new_vmess_url="vmess://$new_encoded_part"
-new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-
-    # 更新vless-ws
-old_vless_ws=$(grep -o 'vless://[^@]*@[^?]*?[^#]*#[^"]*' "$new_content2" | grep "vless-argo" | head -1)
-new_vless_ws=$(echo "$old_vless_ws" | sed "s/@[^:]*/@${cfip}:${cfport}/")
-new_content3=$(echo "$new_content2" | sed "s|$old_vless_ws|$new_vless_ws|")
+    content=$(cat "$client_dir")
     
-    # 更新trojan-ws
-old_trojan_ws=$(grep -o 'trojan://[^@]*@[^?]*?[^#]*#[^"]*' "$new_content3" | head -1)
-new_trojan_ws=$(echo "$old_trojan_ws" | sed "s/@[^:]*/@${cfip}:${cfport}/")
-final_content=$(echo "$new_content3" | sed "s|$old_trojan_ws|$new_trojan_ws|")
+    # 更新vmess节点
+    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+    encoded_part="${vmess_url#vmess://}"
+    decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
+    if [ $? -eq 0 ]; then
+        updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
+            '.add = $cfip | .port = $cfport')
+        new_encoded_part=$(echo "$updated_json" | base64 -w0)
+        new_vmess_url="vmess://$new_encoded_part"
+        content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+    fi
+    
+    # 更新vless-ws节点
+    old_vless_ws=$(grep -o 'vless://[^@]*@[^?]*?[^#]*#[^"]*' "$content" | grep "vless-argo" | head -1)
+    if [ -n "$old_vless_ws" ]; then
+        new_vless_ws=$(echo "$old_vless_ws" | sed "s/@[^:]*/@${cfip}:${cfport}/")
+        content=$(echo "$content" | sed "s|$old_vless_ws|$new_vless_ws|")
+    fi
+    
+    # 更新trojan-ws节点
+    old_trojan_ws=$(grep -o 'trojan://[^@]*@[^?]*?[^#]*#[^"]*' "$content" | head -1)
+    if [ -n "$old_trojan_ws" ]; then
+        new_trojan_ws=$(echo "$old_trojan_ws" | sed "s/@[^:]*/@${cfip}:${cfport}/")
+        content=$(echo "$content" | sed "s|$old_trojan_ws|$new_trojan_ws|")
+    fi
 
-echo "$new_content" > "$client_dir"
-base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-green "\nvmess/vless/trojan节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下节点${re}\n"
-purple "$new_vmess_url\n"
-purple "$new_vless_ws\n"
-purple "$new_trojan_ws\n"
+    echo "$content" > "$client_dir"
+    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
+    
+    green "\n所有vmess/vless/trojan节点优选域名已更新为：${purple}${cfip}:${cfport}${re}\n"
+    [ -n "$new_vmess_url" ] && purple "$new_vmess_url\n"
+    [ -n "$new_vless_ws" ] && purple "$new_vless_ws\n"
+    [ -n "$new_trojan_ws" ] && purple "$new_trojan_ws\n"
 }
 
 # 主菜单
