@@ -331,22 +331,6 @@ cat > "${config_dir}" << EOF
       }
     },
     {
-      "type": "trojan",
-      "tag": "trojan-ws",
-      "listen": "::",
-      "listen_port": 8003,
-      "users": [
-        {
-          "password": "$uuid"
-        }
-      ],
-      "transport": {
-        "type": "ws",
-        "path": "/trojan-argo",
-        "early_data_header_name": "Sec-WebSocket-Protocol"
-      }
-    },
-    {
       "type": "hysteria2",
       "tag": "hysteria2",
       "listen": "::",
@@ -471,7 +455,8 @@ After=network.target
 Type=simple
 NoNewPrivileges=yes
 TimeoutStartSec=0
-ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1 & /etc/sing-box/argo tunnel --url http://localhost:8002 --no-autoupdate --edge-ip-version auto --protocol http2 >> /etc/sing-box/argo.log 2>&1 & /etc/sing-box/argo tunnel --url http://localhost:8003 --no-autoupdate --edge-ip-version auto --protocol http2 >> /etc/sing-box/argo.log 2>&1"
+ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1"
+ExecStart=/bin/sh -c "/etc/sing-box/argo tunnel --url http://localhost:8002 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1"
 Restart=on-failure
 RestartSec=5s
 
@@ -510,6 +495,7 @@ EOF
 description="Cloudflare Tunnel"
 command="/bin/sh"
 command_args="-c '/etc/sing-box/argo tunnel --url http://localhost:8001 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1'"
+command_args="-c '/etc/sing-box/argo tunnel --url http://localhost:8002 --no-autoupdate --edge-ip-version auto --protocol http2 > /etc/sing-box/argo.log 2>&1'"
 command_background=true
 pidfile="/var/run/argo.pid"
 EOF
@@ -549,11 +535,10 @@ get_info() {
   cat > ${work_dir}/url.txt <<EOF
 vless://${uuid}@${server_ip}:${vless_port}?encryption=none&flow=xtls-rprx-vision&security=reality&sni=www.iij.ad.jp&fp=firefox&pbk=${public_key}&type=tcp&headerType=none#${isp}
 
+vmess://$(echo "$VMESS" | base64 -w0)
+
 vless://${uuid}@${CFIP}:${CFPORT}?encryption=none&security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Fvless-argo%3Fed%3D2560#${isp}
 
-trojan://${uuid}@${CFIP}:${CFPORT}?security=tls&sni=${argoDomain}&fp=firefox&type=ws&host=${argoDomain}&path=%2Ftrojan-argo%3Fed%3D2560#${isp}
-
-vmess://$(echo "$VMESS" | base64 -w0)
 
 hysteria2://${uuid}@${server_ip}:${hy2_port}/?sni=www.bing.com&insecure=1&alpn=h3&obfs=none#${isp}
 
@@ -872,7 +857,7 @@ create_shortcut() {
   cat > "$work_dir/sb.sh" << EOF
 #!/usr/bin/env bash
 
-bash <(curl -Ls https://raw.githubusercontent.com/zx7898/sing-box/refs/heads/main/sing-box.sh) \$1
+bash <(curl -Ls https://raw.githubusercontent.com/eooce/sing-box/main/sing-box.sh) \$1
 EOF
   chmod +x "$work_dir/sb.sh"
   ln -sf "$work_dir/sb.sh" /usr/bin/sb
@@ -932,10 +917,6 @@ change_config() {
             green "3. 修改tuic端口"
             skyblue "------------"
             green "4. 修改vmess-argo端口"
-            skyblue "------------"
-            green "5. 修改vless-argo端口"
-            skyblue "------------"
-            green "6. 修改trojan-argo端口"
             skyblue "------------"
             purple "0. 返回上一级菜单"
             skyblue "------------"
@@ -1006,72 +987,8 @@ change_config() {
                     restart_singbox
                     green "\nvmess-argo端口已修改为：${purple}${new_port}${re}\n"
                     ;;                    
-                5)  
-                    reading "\n请输入vless-argo端口 (回车跳过将使用随机端口): " new_port
-                    [ -z "$new_port" ] && new_port=$(shuf -i 2000-65000 -n 1)
-                    sed -i '/"type": "vless"/,/listen_port/ s/"listen_port": [0-9]\+/"listen_port": '"$new_port"'/' $config_dir
-                    allow_port $new_port/tcp > /dev/null 2>&1
-                    if command_exists rc-service; then
-                        if grep -q "localhost:" /etc/init.d/argo; then
-                            sed -i 's/localhost:[0-9]\{1,\}/localhost:'"$new_port"'/' /etc/init.d/argo
-                            get_quick_tunnel
-                            change_argo_domain 
-                        fi
-                    else
-                        if grep -q "localhost:" /etc/systemd/system/argo.service; then
-                            sed -i 's/localhost:[0-9]\{1,\}/localhost:'"$new_port"'/' /etc/systemd/system/argo.service
-                            get_quick_tunnel
-                            change_argo_domain 
-                        fi
-                    fi
-
-                    if [ -f /etc/sing-box/tunnel.yml ]; then
-                        sed -i 's/localhost:[0-9]\{1,\}/localhost:'"$new_port"'/' /etc/sing-box/tunnel.yml
-                        restart_argo
-                    fi
-
-                    if ([ -f /etc/systemd/system/argo.service ] && grep -q -- "--token" /etc/systemd/system/argo.service) || \
-                       ([ -f /etc/init.d/argo ] && grep -q -- "--token" /etc/init.d/argo); then
-                        yellow "请在cloudflared里也对应修改端口为：${purple}${new_port}${re}\n"
-                    fi
-
-                    restart_singbox
-                    green "\nvless-argo端口已修改为：${purple}${new_port}${re}\n"
-                    ;;                    
-                6)  
-                    reading "\n请输入trojan-argo端口 (回车跳过将使用随机端口): " new_port
-                    [ -z "$new_port" ] && new_port=$(shuf -i 2000-65000 -n 1)
-                    sed -i '/"type": "trojan"/,/listen_port/ s/"listen_port": [0-9]\+/"listen_port": '"$new_port"'/' $config_dir
-                    allow_port $new_port/tcp > /dev/null 2>&1
-                    if command_exists rc-service; then
-                        if grep -q "localhost:" /etc/init.d/argo; then
-                            sed -i 's/localhost:[0-9]\{1,\}/localhost:'"$new_port"'/' /etc/init.d/argo
-                            get_quick_tunnel
-                            change_argo_domain 
-                        fi
-                    else
-                        if grep -q "localhost:" /etc/systemd/system/argo.service; then
-                            sed -i 's/localhost:[0-9]\{1,\}/localhost:'"$new_port"'/' /etc/systemd/system/argo.service
-                            get_quick_tunnel
-                            change_argo_domain 
-                        fi
-                    fi
-
-                    if [ -f /etc/sing-box/tunnel.yml ]; then
-                        sed -i 's/localhost:[0-9]\{1,\}/localhost:'"$new_port"'/' /etc/sing-box/tunnel.yml
-                        restart_argo
-                    fi
-
-                    if ([ -f /etc/systemd/system/argo.service ] && grep -q -- "--token" /etc/systemd/system/argo.service) || \
-                       ([ -f /etc/init.d/argo ] && grep -q -- "--token" /etc/init.d/argo); then
-                        yellow "请在cloudflared里也对应修改端口为：${purple}${new_port}${re}\n"
-                    fi
-
-                    restart_singbox
-                    green "\ntrojan-argo端口已修改为：${purple}${new_port}${re}\n"
-                    ;;                    
                 0)  change_config ;;
-                *)  red "无效的选项，请输入 1 到 ，6" ;;
+                *)  red "无效的选项，请输入 1 到 4" ;;
             esac
             ;;
         2)
@@ -1386,10 +1303,6 @@ ingress:
     service: http://localhost:8002
     originRequest:
       noTLSVerify: true
-  - hostname: $ArgoDomain
-    service: http://localhost:8003
-    originRequest:
-      noTLSVerify: true
   - service: http_status:404
 EOF
 
@@ -1477,41 +1390,19 @@ ArgoDomain=$get_argodomain
 
 # 更新Argo域名到订阅
 change_argo_domain() {
-    content=$(cat "$client_dir")
-    
-    # 更新vmess节点
-    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-    vmess_prefix="vmess://"
-    encoded_vmess="${vmess_url#"$vmess_prefix"}"
-    decoded_vmess=$(echo "$encoded_vmess" | base64 --decode 2>/dev/null)
-    if [ $? -eq 0 ]; then
-        updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
-        encoded_updated_vmess=$(echo "$updated_vmess" | base64 -w0)
-        new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
-        content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-    fi
-    
-    # 更新vless-ws节点
-    old_vless_ws=$(grep -o 'vless://[^@]*@[^?]*?[^#]*#[^"]*' "$client_dir" | grep "vless-argo" | head -1)
-    if [ -n "$old_vless_ws" ]; then
-        new_vless_ws=$(echo "$old_vless_ws" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
-        content=$(echo "$content" | sed "s|$old_vless_ws|$new_vless_ws|")
-    fi
-    
-    # 更新trojan-ws节点
-    old_trojan_ws=$(grep -o 'trojan://[^@]*@[^?]*?[^#]*#[^"]*' "$client_dir" | head -1)
-    if [ -n "$old_trojan_ws" ]; then
-        new_trojan_ws=$(echo "$old_trojan_ws" | sed "s/host=[^&]*/host=${ArgoDomain}/g" | sed "s/sni=[^&]*/sni=${ArgoDomain}/g")
-        content=$(echo "$content" | sed "s|$old_trojan_ws|$new_trojan_ws|")
-    fi
-    
-    echo "$content" > "$client_dir"
-    base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
-    
-    green "所有Argo节点已更新,更新订阅或手动复制以下节点\n"
-    [ -n "$new_vmess_url" ] && purple "$new_vmess_url\n"
-    [ -n "$new_vless_ws" ] && purple "$new_vless_ws\n"
-    [ -n "$new_trojan_ws" ] && purple "$new_trojan_ws\n"
+content=$(cat "$client_dir")
+vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+vmess_prefix="vmess://"
+encoded_vmess="${vmess_url#"$vmess_prefix"}"
+decoded_vmess=$(echo "$encoded_vmess" | base64 --decode)
+updated_vmess=$(echo "$decoded_vmess" | jq --arg new_domain "$ArgoDomain" '.host = $new_domain | .sni = $new_domain')
+encoded_updated_vmess=$(echo "$updated_vmess" | base64 | tr -d '\n')
+new_vmess_url="${vmess_prefix}${encoded_updated_vmess}"
+new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+echo "$new_content" > "$client_dir"
+base64 -w0 ${work_dir}/url.txt > ${work_dir}/sub.txt
+green "vmess节点已更新,更新订阅或手动复制以下vmess-argo节点\n"
+purple "$new_vmess_url\n" 
 }
 
 # 查看节点信息和订阅链接
@@ -1529,7 +1420,7 @@ check_nodes() {
 
 change_cfip() {
     clear
-    yellow "修改vmess/vless/trojan优选域名\n"
+    yellow "修改vmess-argo优选域名\n"
     green "1: cf.090227.xyz  2: cf.877774.xyz  3: cf.877771.xyz  4: cdns.doon.eu.org  5: cf.zhetengsha.eu.org  6: time.is\n"
     reading "请输入你的优选域名或优选IP\n(请输入1至6选项,可输入域名:端口 或 IP:端口,直接回车默认使用1): " cfip_input
 
@@ -1574,41 +1465,19 @@ change_cfip() {
         esac
     fi
 
-    content=$(cat "$client_dir")
-    
-    # 更新vmess节点
-    vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
-    encoded_part="${vmess_url#vmess://}"
-    decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
-    if [ $? -eq 0 ]; then
-        updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
-            '.add = $cfip | .port = $cfport')
-        new_encoded_part=$(echo "$updated_json" | base64 -w0)
-        new_vmess_url="vmess://$new_encoded_part"
-        content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
-    fi
-    
-    # 更新vless-ws节点
-    old_vless_ws=$(grep -o 'vless://[^@]*@[^?]*?[^#]*#[^"]*' "$content" | grep "vless-argo" | head -1)
-    if [ -n "$old_vless_ws" ]; then
-        new_vless_ws=$(echo "$old_vless_ws" | sed "s/@[^:]*/@${cfip}:${cfport}/")
-        content=$(echo "$content" | sed "s|$old_vless_ws|$new_vless_ws|")
-    fi
-    
-    # 更新trojan-ws节点
-    old_trojan_ws=$(grep -o 'trojan://[^@]*@[^?]*?[^#]*#[^"]*' "$content" | head -1)
-    if [ -n "$old_trojan_ws" ]; then
-        new_trojan_ws=$(echo "$old_trojan_ws" | sed "s/@[^:]*/@${cfip}:${cfport}/")
-        content=$(echo "$content" | sed "s|$old_trojan_ws|$new_trojan_ws|")
-    fi
-
-    echo "$content" > "$client_dir"
-    base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
-    
-    green "\n所有vmess/vless/trojan节点优选域名已更新为：${purple}${cfip}:${cfport}${re}\n"
-    [ -n "$new_vmess_url" ] && purple "$new_vmess_url\n"
-    [ -n "$new_vless_ws" ] && purple "$new_vless_ws\n"
-    [ -n "$new_trojan_ws" ] && purple "$new_trojan_ws\n"
+content=$(cat "$client_dir")
+vmess_url=$(grep -o 'vmess://[^ ]*' "$client_dir")
+encoded_part="${vmess_url#vmess://}"
+decoded_json=$(echo "$encoded_part" | base64 --decode 2>/dev/null)
+updated_json=$(echo "$decoded_json" | jq --arg cfip "$cfip" --argjson cfport "$cfport" \
+    '.add = $cfip | .port = $cfport')
+new_encoded_part=$(echo "$updated_json" | base64 -w0)
+new_vmess_url="vmess://$new_encoded_part"
+new_content=$(echo "$content" | sed "s|$vmess_url|$new_vmess_url|")
+echo "$new_content" > "$client_dir"
+base64 -w0 "${work_dir}/url.txt" > "${work_dir}/sub.txt"
+green "\nvmess节点优选域名已更新为：${purple}${cfip}:${cfport},${green}更新订阅或手动复制以下vmess-argo节点${re}\n"
+purple "$new_vmess_url\n"
 }
 
 # 主菜单
